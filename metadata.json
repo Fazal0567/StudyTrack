@@ -1,0 +1,6 @@
+{
+  "name": "StudyTrack",
+  "description": "Daily study target tracking application for students to manage daily study goals, progress, streaks, and reminders.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

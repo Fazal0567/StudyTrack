@@ -1,0 +1,188 @@
+import React, { useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useOutletContext } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { ProtectedRoute } from './components/ProtectedRoute';
+import { Navbar } from './components/Navbar';
+import { Sidebar } from './components/Sidebar';
+import { TaskModal } from './components/TaskModal';
+import { StudyTimerModal } from './components/StudyTimerModal';
+import { StudyTask } from './types';
+import { createStudyTask, updateStudyTask, getTodayDateString } from './services/taskService';
+
+// Pages
+import { Login } from './pages/Login';
+import { Register } from './pages/Register';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { Dashboard } from './pages/Dashboard';
+import { TodaysTasks } from './pages/TodaysTasks';
+import { MissedTasks } from './pages/MissedTasks';
+import { CalendarView } from './pages/CalendarView';
+import { ProgressView } from './pages/ProgressView';
+import { ProfilePage } from './pages/ProfilePage';
+import { SettingsPage } from './pages/SettingsPage';
+
+interface OutletContextType {
+  handleOpenAddModal: () => void;
+  handleOpenEditModal: (task: StudyTask) => void;
+  handleStartStudy: (task: StudyTask) => void;
+}
+
+const useOutletContextTyped = () => useOutletContext<OutletContextType>();
+
+const AppLayout: React.FC = () => {
+  const { currentUser, tasks } = useAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [taskModalOpen, setTaskModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<StudyTask | null>(null);
+
+  // Timer modal state
+  const [focusTask, setFocusTask] = useState<StudyTask | null>(null);
+  const [timerModalOpen, setTimerModalOpen] = useState(false);
+
+  const todayStr = getTodayDateString();
+  const pendingCount = tasks.filter(t => t.date === todayStr && t.status === 'Pending').length;
+  const missedCount = tasks.filter(t => t.status === 'Missed').length;
+
+  const handleOpenAddModal = () => {
+    setEditingTask(null);
+    setTaskModalOpen(true);
+  };
+
+  const handleOpenEditModal = (task: StudyTask) => {
+    setEditingTask(task);
+    setTaskModalOpen(true);
+  };
+
+  const handleStartStudy = (task: StudyTask) => {
+    setFocusTask(task);
+    setTimerModalOpen(true);
+  };
+
+  const handleSaveTask = async (
+    taskData: Omit<StudyTask, 'id' | 'userId' | 'createdAt'>
+  ) => {
+    if (!currentUser) return;
+
+    if (editingTask) {
+      await updateStudyTask(editingTask.id, taskData);
+    } else {
+      await createStudyTask(currentUser.uid, taskData);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col transition-colors max-w-full overflow-x-hidden">
+      <Navbar
+        onOpenAddModal={handleOpenAddModal}
+        toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+      />
+
+      <div className="flex-1 max-w-7xl w-full mx-auto flex max-w-full overflow-x-hidden">
+        <Sidebar
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          pendingCount={pendingCount}
+          missedCount={missedCount}
+        />
+
+        <main className="flex-1 p-3 sm:p-6 lg:p-8 min-w-0 max-w-full overflow-x-hidden">
+          <Outlet context={{ handleOpenAddModal, handleOpenEditModal, handleStartStudy }} />
+        </main>
+      </div>
+
+      <TaskModal
+        isOpen={taskModalOpen}
+        onClose={() => setTaskModalOpen(false)}
+        onSave={handleSaveTask}
+        initialTask={editingTask}
+      />
+
+      <StudyTimerModal
+        task={focusTask}
+        isOpen={timerModalOpen}
+        onClose={() => setTimerModalOpen(false)}
+      />
+    </div>
+  );
+};
+
+// Route wrapper components to pass context props clean & typed
+const DashboardWrapper: React.FC = () => {
+  const { handleOpenAddModal, handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
+  return (
+    <Dashboard
+      onOpenAddModal={handleOpenAddModal}
+      onEditTask={handleOpenEditModal}
+      onStartStudy={handleStartStudy}
+    />
+  );
+};
+
+const TodaysTasksWrapper: React.FC = () => {
+  const { handleOpenAddModal, handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
+  return (
+    <TodaysTasks
+      onOpenAddModal={handleOpenAddModal}
+      onEditTask={handleOpenEditModal}
+      onStartStudy={handleStartStudy}
+    />
+  );
+};
+
+const MissedTasksWrapper: React.FC = () => {
+  const { handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
+  return (
+    <MissedTasks
+      onEditTask={handleOpenEditModal}
+      onStartStudy={handleStartStudy}
+    />
+  );
+};
+
+const CalendarWrapper: React.FC = () => {
+  const { handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
+  return (
+    <CalendarView
+      onEditTask={handleOpenEditModal}
+      onStartStudy={handleStartStudy}
+    />
+  );
+};
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Public Auth Routes */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+
+            {/* Protected Application Routes */}
+            <Route
+              element={
+                <ProtectedRoute>
+                  <AppLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route path="/dashboard" element={<DashboardWrapper />} />
+              <Route path="/todays-tasks" element={<TodaysTasksWrapper />} />
+              <Route path="/missed-tasks" element={<MissedTasksWrapper />} />
+              <Route path="/calendar" element={<CalendarWrapper />} />
+              <Route path="/progress" element={<ProgressView />} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+            </Route>
+
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
+  );
+}

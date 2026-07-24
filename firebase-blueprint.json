@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "users": {
+      "title": "User Profile",
+      "description": "User account settings, streaks, and notification preferences",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "currentStreak": { "type": "number" },
+        "emailNotifications": { "type": "boolean" },
+        "browserNotifications": { "type": "boolean" },
+        "notificationTimeMorning": { "type": "string" },
+        "notificationTimeEvening": { "type": "string" },
+        "notificationTimeNight": { "type": "string" }
+      },
+      "required": ["uid", "name", "email"]
+    },
+    "tasks": {
+      "title": "Study Target Task",
+      "description": "Daily study target tasks for students",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "estimatedTime": { "type": "number" },
+        "dueTime": { "type": "string" },
+        "priority": { "type": "string", "enum": ["Low", "Medium", "High"] },
+        "status": { "type": "string", "enum": ["Pending", "Completed", "Missed"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "date": { "type": "string" },
+        "completedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "subject", "status", "date"]
+    }
+  }
+}
