@@ -67,7 +67,16 @@ async function startServer() {
 
   // Test Email Endpoint
   app.post('/api/send-test-email', async (req, res) => {
-    const { email, userName } = req.body;
+    const { email, userName, emailNotificationsEnabled } = req.body;
+
+    if (emailNotificationsEnabled === false) {
+      return res.json({
+        success: false,
+        smtpConfigured: false,
+        mode: 'stopped',
+        message: 'Email reminders are currently toggled OFF. Switch toggle to ON to activate live SMTP delivery.',
+      });
+    }
 
     if (!email) {
       return res.status(400).json({ success: false, message: 'Email recipient is required' });
@@ -158,7 +167,16 @@ async function startServer() {
 
   // Scheduled / Manual Email Reminder Endpoint
   app.post('/api/send-email-reminder', async (req, res) => {
-    const { toEmail, userName, reminderType, tasks } = req.body;
+    const { toEmail, userName, reminderType, tasks, emailNotificationsEnabled } = req.body;
+
+    if (emailNotificationsEnabled === false) {
+      return res.json({
+        success: false,
+        smtpConfigured: false,
+        mode: 'stopped',
+        message: 'Email reminders are currently toggled OFF. Switch toggle to ON to activate live SMTP delivery.',
+      });
+    }
 
     if (!toEmail) {
       return res.status(400).json({ success: false, message: 'Recipient email is required' });

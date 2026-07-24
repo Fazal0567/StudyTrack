@@ -163,14 +163,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUserProfile = async (updates: Partial<UserProfile>) => {
     if (!currentUser) return;
+    setUserProfile(prev => (prev ? { ...prev, ...updates } : null));
+
     const userRef = doc(db, 'users', currentUser.uid);
     await updateDoc(userRef, updates);
 
     if (updates.name && auth.currentUser) {
       await updateProfile(auth.currentUser, { displayName: updates.name });
     }
-
-    setUserProfile(prev => (prev ? { ...prev, ...updates } : null));
   };
 
   const refreshTasks = () => {

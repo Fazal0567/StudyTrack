@@ -5,6 +5,7 @@ export interface EmailReminderPayload {
   userName: string;
   reminderType: 'morning' | 'evening' | 'night';
   tasks: StudyTask[];
+  emailNotificationsEnabled?: boolean;
 }
 
 export interface EmailResult {
@@ -12,7 +13,7 @@ export interface EmailResult {
   message: string;
   previewUrl?: string | null;
   smtpConfigured?: boolean;
-  mode?: 'smtp' | 'ethereal' | 'simulation';
+  mode?: 'smtp' | 'ethereal' | 'simulation' | 'stopped';
 }
 
 export const getEmailStatus = async (): Promise<{ configured: boolean; host?: string; mode: string }> => {
@@ -28,6 +29,15 @@ export const getEmailStatus = async (): Promise<{ configured: boolean; host?: st
 };
 
 export const sendEmailReminder = async (payload: EmailReminderPayload): Promise<EmailResult> => {
+  if (payload.emailNotificationsEnabled === false) {
+    return {
+      success: false,
+      message: 'Email reminders are currently toggled OFF. Switch toggle to ON to activate live SMTP delivery.',
+      smtpConfigured: false,
+      mode: 'stopped',
+    };
+  }
+
   try {
     const response = await fetch('/api/send-email-reminder', {
       method: 'POST',
@@ -43,7 +53,7 @@ export const sendEmailReminder = async (payload: EmailReminderPayload): Promise<
     }
 
     return {
-      success: true,
+      success: data.success,
       message: data.message || 'Email reminder processed successfully!',
       previewUrl: data.previewUrl,
       smtpConfigured: data.smtpConfigured,
@@ -55,14 +65,27 @@ export const sendEmailReminder = async (payload: EmailReminderPayload): Promise<
   }
 };
 
-export const sendTestEmail = async (email: string, userName: string): Promise<EmailResult> => {
+export const sendTestEmail = async (
+  email: string,
+  userName: string,
+  emailNotificationsEnabled: boolean = true
+): Promise<EmailResult> => {
+  if (emailNotificationsEnabled === false) {
+    return {
+      success: false,
+      message: 'Email reminders are currently toggled OFF. Switch toggle to ON to activate live SMTP delivery.',
+      smtpConfigured: false,
+      mode: 'stopped',
+    };
+  }
+
   try {
     const response = await fetch('/api/send-test-email', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, userName }),
+      body: JSON.stringify({ email, userName, emailNotificationsEnabled }),
     });
 
     const data = await response.json();
@@ -71,7 +94,7 @@ export const sendTestEmail = async (email: string, userName: string): Promise<Em
     }
 
     return {
-      success: true,
+      success: data.success,
       message: data.message || 'Test email dispatched successfully!',
       previewUrl: data.previewUrl,
       smtpConfigured: data.smtpConfigured,

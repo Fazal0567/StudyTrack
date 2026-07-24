@@ -45,6 +45,29 @@ export const SettingsPage: React.FC = () => {
     mode: 'simulation',
   });
 
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState<boolean>(
+    userProfile?.emailNotifications ?? true
+  );
+
+  useEffect(() => {
+    if (userProfile?.emailNotifications !== undefined) {
+      setEmailNotificationsEnabled(userProfile.emailNotifications);
+    }
+  }, [userProfile?.emailNotifications]);
+
+  const handleToggleEmailNotifications = async () => {
+    const nextVal = !emailNotificationsEnabled;
+    setEmailNotificationsEnabled(nextVal);
+    if (userProfile) {
+      try {
+        await updateUserProfile({ emailNotifications: nextVal });
+      } catch (err) {
+        console.error('Failed to update email notifications preference:', err);
+        setEmailNotificationsEnabled(!nextVal);
+      }
+    }
+  };
+
   useEffect(() => {
     getEmailStatus().then(info => {
       setEmailServerInfo({ configured: info.configured, mode: info.mode });
@@ -56,12 +79,6 @@ export const SettingsPage: React.FC = () => {
     setNotificationPermission(getNotificationPermissionStatus());
     if (userProfile) {
       await updateUserProfile({ browserNotifications: granted });
-    }
-  };
-
-  const handleToggleEmailNotifications = async (enabled: boolean) => {
-    if (userProfile) {
-      await updateUserProfile({ emailNotifications: enabled });
     }
   };
 
@@ -84,6 +101,7 @@ export const SettingsPage: React.FC = () => {
         userName: userProfile.name,
         reminderType: type,
         tasks: todayTasks,
+        emailNotificationsEnabled: emailNotificationsEnabled,
       });
 
       setEmailStatusMsg(res.message);
@@ -256,12 +274,18 @@ export const SettingsPage: React.FC = () => {
                 </h3>
                 <span
                   className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                    emailServerInfo.configured
+                    !emailNotificationsEnabled
+                      ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                      : emailServerInfo.configured
                       ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
                       : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                   }`}
                 >
-                  {emailServerInfo.configured ? '🟢 Live SMTP Active' : '🟡 Test Sandbox Mode'}
+                  {!emailNotificationsEnabled
+                    ? '🔴 SMTP Stopped (OFF)'
+                    : emailServerInfo.configured
+                    ? '🟢 SMTP Live & Active'
+                    : '🟡 Test Sandbox Active'}
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -270,15 +294,37 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
 
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={userProfile?.emailNotifications ?? true}
-              onChange={e => handleToggleEmailNotifications(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-slate-600 peer-checked:bg-blue-600"></div>
-          </label>
+          <div className="flex items-center gap-2.5">
+            <span
+              className={`text-xs font-bold transition-colors ${
+                emailNotificationsEnabled
+                  ? 'text-blue-600 dark:text-blue-400'
+                  : 'text-slate-400 dark:text-slate-500'
+              }`}
+            >
+              {emailNotificationsEnabled ? 'ON' : 'OFF'}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={emailNotificationsEnabled}
+              onClick={handleToggleEmailNotifications}
+              className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                emailNotificationsEnabled ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+              title={
+                emailNotificationsEnabled
+                  ? 'Disable Email Reminders'
+                  : 'Enable Email Reminders'
+              }
+            >
+              <span
+                className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  emailNotificationsEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
         {/* Informational Guidance Box */}
