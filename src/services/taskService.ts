@@ -88,7 +88,7 @@ export const subscribeToUserTasks = (
       callback(tasks);
     },
     error => {
-      console.error('Error fetching tasks realtime:', error);
+      console.warn('Realtime task listener notice:', error.message);
       callback([]);
     }
   );

@@ -47,7 +47,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const ensureUserProfile = async (user: User, nameOverride?: string): Promise<UserProfile> => {
     const userRef = doc(db, 'users', user.uid);
     try {
-      const docSnap = await getDoc(userRef);
+      const fetchDocPromise = getDoc(userRef);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Firestore fetch timeout')), 2000)
+      );
+      const docSnap = (await Promise.race([fetchDocPromise, timeoutPromise])) as any;
 
       if (docSnap.exists()) {
         const data = docSnap.data();
@@ -81,16 +85,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           notificationTimeEvening: '18:00',
           notificationTimeNight: '21:00',
         };
-        try {
-          await setDoc(userRef, newProfile);
-        } catch (setErr) {
-          console.warn('Failed to save user profile to Firestore (offline mode):', setErr);
-        }
+        setDoc(userRef, newProfile).catch(setErr =>
+          console.warn('Failed to save user profile to Firestore (background):', setErr)
+        );
         setUserProfile(newProfile);
         return newProfile;
       }
     } catch (err) {
-      console.warn('Could not fetch user profile from Firestore (offline or connection issue), using local fallback profile:', err);
+      console.warn('Could not fetch user profile from Firestore in time, using instant fallback profile:', err);
       const fallbackProfile: UserProfile = {
         uid: user.uid,
         name: nameOverride || user.displayName || (user.email ? user.email.split('@')[0] : 'Student'),
