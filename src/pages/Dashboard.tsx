@@ -62,7 +62,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
 
   const handleToggleComplete = async (task: StudyTask) => {
     try {
-      await toggleTaskCompletion(task);
+      await toggleTaskCompletion(task, userProfile);
     } catch (err) {
       console.error('Failed to toggle completion:', err);
     }

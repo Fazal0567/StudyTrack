@@ -36,7 +36,7 @@ interface CalendarViewProps {
 }
 
 export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartStudy }) => {
-  const { tasks } = useAuth();
+  const { tasks, userProfile } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
 
@@ -58,7 +58,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartS
 
   const handleToggleComplete = async (task: StudyTask) => {
     try {
-      await toggleTaskCompletion(task);
+      await toggleTaskCompletion(task, userProfile);
     } catch (err) {
       console.error('Error toggling complete:', err);
     }

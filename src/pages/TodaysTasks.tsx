@@ -21,7 +21,7 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
   onEditTask,
   onStartStudy,
 }) => {
-  const { tasks } = useAuth();
+  const { tasks, userProfile } = useAuth();
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Completed'>('All');
 
   const todayStr = getTodayDateString();
@@ -45,7 +45,7 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
 
   const handleToggleComplete = async (task: StudyTask) => {
     try {
-      await toggleTaskCompletion(task);
+      await toggleTaskCompletion(task, userProfile);
     } catch (err) {
       console.error('Error toggling task completion:', err);
     }

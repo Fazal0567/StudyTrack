@@ -128,14 +128,18 @@ export const deleteStudyTask = async (taskId: string): Promise<void> => {
 };
 
 export const toggleTaskCompletion = async (
-  task: StudyTask
-): Promise<void> => {
+  task: StudyTask,
+  _userProfile?: UserProfile | null
+): Promise<{ isCompleted: boolean }> => {
   const isNowCompleted = task.status !== 'Completed';
+  const completedAtISO = isNowCompleted ? new Date().toISOString() : undefined;
   const updates: Partial<StudyTask> = {
     status: isNowCompleted ? 'Completed' : 'Pending',
-    completedAt: isNowCompleted ? new Date().toISOString() : undefined,
+    completedAt: completedAtISO,
   };
   await updateStudyTask(task.id, updates);
+
+  return { isCompleted: isNowCompleted };
 };
 
 export const carryForwardTask = async (

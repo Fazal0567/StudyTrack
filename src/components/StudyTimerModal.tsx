@@ -17,6 +17,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { toggleTaskCompletion } from '../services/taskService';
+import { useAuth } from '../context/AuthContext';
 
 interface StudyTimerModalProps {
   task: StudyTask | null;
@@ -31,6 +32,7 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
   onClose,
   onTaskUpdated,
 }) => {
+  const { userProfile } = useAuth();
   if (!isOpen || !task) return null;
 
   // Time specified in minutes (default to task.estimatedTime)
@@ -149,7 +151,7 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
     setCompleting(true);
     try {
       playChimeSound();
-      await toggleTaskCompletion(task);
+      await toggleTaskCompletion(task, userProfile);
       setIsCompleted(true);
       if (onTaskUpdated) onTaskUpdated();
     } catch (err) {

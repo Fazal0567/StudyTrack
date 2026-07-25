@@ -46,29 +46,54 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Sync or create user document in Firestore
   const ensureUserProfile = async (user: User, nameOverride?: string): Promise<UserProfile> => {
     const userRef = doc(db, 'users', user.uid);
-    const docSnap = await getDoc(userRef);
+    try {
+      const docSnap = await getDoc(userRef);
 
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      const profile: UserProfile = {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const profile: UserProfile = {
+          uid: user.uid,
+          name: data.name || nameOverride || user.displayName || 'Student',
+          email: data.email || user.email || '',
+          photoURL: data.photoURL || user.photoURL || '',
+          createdAt: data.createdAt || new Date().toISOString(),
+          currentStreak: data.currentStreak || 0,
+          emailNotifications: data.emailNotifications ?? true,
+          browserNotifications: data.browserNotifications ?? true,
+          notificationTimeMorning: data.notificationTimeMorning || '08:00',
+          notificationTimeEvening: data.notificationTimeEvening || '18:00',
+          notificationTimeNight: data.notificationTimeNight || '21:00',
+        };
+        setUserProfile(profile);
+        return profile;
+      } else {
+        const newProfile: UserProfile = {
+          uid: user.uid,
+          name: nameOverride || user.displayName || 'Student',
+          email: user.email || '',
+          photoURL: user.photoURL || '',
+          createdAt: new Date().toISOString(),
+          currentStreak: 0,
+          lastActiveDate: getTodayDateString(),
+          emailNotifications: true,
+          browserNotifications: true,
+          notificationTimeMorning: '08:00',
+          notificationTimeEvening: '18:00',
+          notificationTimeNight: '21:00',
+        };
+        try {
+          await setDoc(userRef, newProfile);
+        } catch (setErr) {
+          console.warn('Failed to save user profile to Firestore (offline mode):', setErr);
+        }
+        setUserProfile(newProfile);
+        return newProfile;
+      }
+    } catch (err) {
+      console.warn('Could not fetch user profile from Firestore (offline or connection issue), using local fallback profile:', err);
+      const fallbackProfile: UserProfile = {
         uid: user.uid,
-        name: data.name || user.displayName || 'Student',
-        email: data.email || user.email || '',
-        photoURL: data.photoURL || user.photoURL || '',
-        createdAt: data.createdAt || new Date().toISOString(),
-        currentStreak: data.currentStreak || 0,
-        emailNotifications: data.emailNotifications ?? true,
-        browserNotifications: data.browserNotifications ?? true,
-        notificationTimeMorning: data.notificationTimeMorning || '08:00',
-        notificationTimeEvening: data.notificationTimeEvening || '18:00',
-        notificationTimeNight: data.notificationTimeNight || '21:00',
-      };
-      setUserProfile(profile);
-      return profile;
-    } else {
-      const newProfile: UserProfile = {
-        uid: user.uid,
-        name: nameOverride || user.displayName || 'Student',
+        name: nameOverride || user.displayName || (user.email ? user.email.split('@')[0] : 'Student'),
         email: user.email || '',
         photoURL: user.photoURL || '',
         createdAt: new Date().toISOString(),
@@ -80,9 +105,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         notificationTimeEvening: '18:00',
         notificationTimeNight: '21:00',
       };
-      await setDoc(userRef, newProfile);
-      setUserProfile(newProfile);
-      return newProfile;
+      setUserProfile(fallbackProfile);
+      return fallbackProfile;
     }
   };
 
@@ -165,11 +189,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentUser) return;
     setUserProfile(prev => (prev ? { ...prev, ...updates } : null));
 
-    const userRef = doc(db, 'users', currentUser.uid);
-    await updateDoc(userRef, updates);
+    try {
+      const userRef = doc(db, 'users', currentUser.uid);
+      await updateDoc(userRef, updates);
+    } catch (err) {
+      console.warn('Failed to update user profile in Firestore (offline mode):', err);
+      try {
+        const userRef = doc(db, 'users', currentUser.uid);
+        await setDoc(userRef, updates, { merge: true });
+      } catch (mergeErr) {
+        console.warn('Fallback setDoc also failed (offline mode):', mergeErr);
+      }
+    }
 
     if (updates.name && auth.currentUser) {
-      await updateProfile(auth.currentUser, { displayName: updates.name });
+      try {
+        await updateProfile(auth.currentUser, { displayName: updates.name });
+      } catch (err) {
+        console.warn('Failed to update Auth user profile name:', err);
+      }
     }
   };
 

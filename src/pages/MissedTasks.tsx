@@ -16,7 +16,7 @@ interface MissedTasksProps {
 }
 
 export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStudy }) => {
-  const { tasks } = useAuth();
+  const { tasks, userProfile } = useAuth();
   const todayStr = getTodayDateString();
 
   // Filter all missed tasks
@@ -24,7 +24,7 @@ export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStu
 
   const handleToggleComplete = async (task: StudyTask) => {
     try {
-      await toggleTaskCompletion(task);
+      await toggleTaskCompletion(task, userProfile);
     } catch (err) {
       console.error('Error toggling task completion:', err);
     }
