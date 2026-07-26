@@ -49,13 +49,15 @@ export const sendEmailReminder = async (payload: EmailReminderPayload): Promise<
     };
   }
 
+  const appUrl = typeof window !== 'undefined' ? window.location.origin : '';
+
   try {
     const response = await fetch('/api/send-email-reminder', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, appUrl }),
     });
 
     const data = await response.json();
@@ -91,12 +93,13 @@ export const sendTestEmail = async (
   }
 
   try {
+    const appUrl = typeof window !== 'undefined' ? window.location.origin : '';
     const response = await fetch('/api/send-test-email', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, userName, emailNotificationsEnabled }),
+      body: JSON.stringify({ email, userName, emailNotificationsEnabled, appUrl }),
     });
 
     const data = await response.json();

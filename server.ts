@@ -65,6 +65,30 @@ async function startServer() {
     }
   };
 
+  // Helper to resolve public live app URL for emails
+  const resolvePublicAppUrl = (req: express.Request): string => {
+    if (req.body?.appUrl && typeof req.body.appUrl === 'string' && req.body.appUrl.startsWith('http')) {
+      return req.body.appUrl;
+    }
+    if (process.env.APP_URL) {
+      return process.env.APP_URL;
+    }
+    const xHost = req.headers['x-forwarded-host'];
+    if (xHost) {
+      const proto = req.headers['x-forwarded-proto'] || 'https';
+      return `${proto}://${xHost}`;
+    }
+    if (req.headers.origin) {
+      return String(req.headers.origin);
+    }
+    if (req.headers.referer) {
+      try {
+        return new URL(String(req.headers.referer)).origin;
+      } catch (e) {}
+    }
+    return `${req.protocol}://${req.get('host')}`;
+  };
+
   // Test Email Endpoint
   app.post('/api/send-test-email', async (req, res) => {
     const { email, userName, emailNotificationsEnabled } = req.body;
@@ -82,9 +106,7 @@ async function startServer() {
       return res.status(400).json({ success: false, message: 'Email recipient is required' });
     }
 
-    const appUrl =
-      process.env.APP_URL ||
-      (req.headers.origin ? String(req.headers.origin) : `${req.protocol}://${req.get('host')}`);
+    const appUrl = resolvePublicAppUrl(req);
 
     try {
       const { transporter, isCustomSmtp, fromAddress } = await getEmailTransporter();
@@ -192,9 +214,7 @@ async function startServer() {
       return res.status(400).json({ success: false, message: 'Recipient email is required' });
     }
 
-    const appUrl =
-      process.env.APP_URL ||
-      (req.headers.origin ? String(req.headers.origin) : `${req.protocol}://${req.get('host')}`);
+    const appUrl = resolvePublicAppUrl(req);
 
     const typeTitles: Record<string, string> = {
       morning: '🌅 Morning Study Targets Plan',

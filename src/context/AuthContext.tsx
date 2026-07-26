@@ -44,12 +44,15 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const loadCachedTasks = (): StudyTask[] => {
+const loadCachedTasks = (userId?: string): StudyTask[] => {
+  if (!userId) return [];
   try {
-    const raw = localStorage.getItem('offline_tasks');
+    const raw = localStorage.getItem(`offline_tasks_${userId}`);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.filter(t => t && (t.userId === userId || !t.userId)).map(t => ({ ...t, userId }));
+      }
     }
   } catch (e) {}
   return [];
@@ -58,8 +61,8 @@ const loadCachedTasks = (): StudyTask[] => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [tasks, setTasks] = useState<StudyTask[]>(loadCachedTasks);
-  const [tasksLoading, setTasksLoading] = useState<boolean>(() => loadCachedTasks().length === 0);
+  const [tasks, setTasks] = useState<StudyTask[]>([]);
+  const [tasksLoading, setTasksLoading] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Sync or create user document in Firestore
@@ -137,6 +140,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribeAuth = onAuthStateChanged(auth, async user => {
       setCurrentUser(user);
       if (user) {
+        // Load user-specific cached tasks instantly so there's no layout jump or data leakage
+        const cached = loadCachedTasks(user.uid);
+        setTasks(cached);
+        setTasksLoading(cached.length === 0);
+
         // Run ensureUserProfile in background without delaying task loading
         ensureUserProfile(user).catch(err => console.warn('Background ensureUserProfile:', err));
 
@@ -154,11 +162,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setTasks(realTasks);
           setTasksLoading(false);
           try {
-            localStorage.setItem('offline_tasks', JSON.stringify(realTasks));
+            localStorage.setItem(`offline_tasks_${user.uid}`, JSON.stringify(realTasks));
           } catch (e) {}
         });
       } else {
         setUserProfile(null);
+        setTasks([]);
+        setTasksLoading(false);
         if (unsubscribeTasks) unsubscribeTasks();
       }
       setLoading(false);
@@ -214,9 +224,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setTasks(prev => {
       if (prev.some(t => t.id === task.id)) return prev;
       const next = [task, ...prev];
-      try {
-        localStorage.setItem('offline_tasks', JSON.stringify(next));
-      } catch (e) {}
+      if (currentUser) {
+        try {
+          localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(next));
+        } catch (e) {}
+      }
       return next;
     });
   };
@@ -224,9 +236,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateTaskInState = (taskId: string, updates: Partial<StudyTask>) => {
     setTasks(prev => {
       const next = prev.map(t => (t.id === taskId ? { ...t, ...updates } : t));
-      try {
-        localStorage.setItem('offline_tasks', JSON.stringify(next));
-      } catch (e) {}
+      if (currentUser) {
+        try {
+          localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(next));
+        } catch (e) {}
+      }
       return next;
     });
   };
@@ -234,19 +248,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteTaskInState = (taskId: string) => {
     setTasks(prev => {
       const next = prev.filter(t => t.id !== taskId);
-      try {
-        localStorage.setItem('offline_tasks', JSON.stringify(next));
-      } catch (e) {}
+      if (currentUser) {
+        try {
+          localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(next));
+        } catch (e) {}
+      }
       return next;
     });
   };
 
   const logout = async () => {
+    setTasks([]);
+    setUserProfile(null);
+    setCurrentUser(null);
     await signOut(auth);
   };
 
   const resetPassword = async (email: string) => {
-    await sendPasswordResetEmail(auth, email);
+    try {
+      const actionCodeSettings = {
+        url: typeof window !== 'undefined' ? `${window.location.origin}/login` : '',
+        handleCodeInApp: false,
+      };
+      await sendPasswordResetEmail(auth, email, actionCodeSettings);
+    } catch (e) {
+      await sendPasswordResetEmail(auth, email);
+    }
   };
 
   const changePassword = async (newPassword: string) => {

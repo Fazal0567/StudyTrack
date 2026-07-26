@@ -85,21 +85,33 @@ export const subscribeToUserTasks = (
         return a.title.localeCompare(b.title);
       });
 
-      // Merge with offline tasks stored in localStorage
+      // Merge with offline tasks stored in localStorage for this specific userId
       let offlineTasks: StudyTask[] = [];
       try {
-        offlineTasks = JSON.parse(localStorage.getItem('offline_tasks') || '[]');
+        const userSpecificKey = `offline_tasks_${userId}`;
+        const raw = localStorage.getItem(userSpecificKey) || localStorage.getItem('offline_tasks');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            offlineTasks = parsed.filter(t => t && (t.userId === userId || !t.userId));
+          }
+        }
       } catch (e) {
         offlineTasks = [];
       }
 
       const allTasksMap = new Map<string, StudyTask>();
-      // Put offline tasks first, then overwrite/merge with Firestore snapshot tasks
+      // Put offline tasks for this user first
       offlineTasks.forEach(t => {
-        if (t && t.id) allTasksMap.set(t.id, t);
+        if (t && t.id) {
+          allTasksMap.set(t.id, { ...t, userId });
+        }
       });
+      // Overwrite/merge with Firestore snapshot tasks (strictly for this userId)
       tasks.forEach(t => {
-        if (t && t.id) allTasksMap.set(t.id, t);
+        if (t && t.id) {
+          allTasksMap.set(t.id, t);
+        }
       });
 
       const allTasks = Array.from(allTasksMap.values());
@@ -120,7 +132,14 @@ export const subscribeToUserTasks = (
       console.warn('Realtime task listener notice:', error.message);
       let offlineTasks: StudyTask[] = [];
       try {
-        offlineTasks = JSON.parse(localStorage.getItem('offline_tasks') || '[]');
+        const userSpecificKey = `offline_tasks_${userId}`;
+        const raw = localStorage.getItem(userSpecificKey) || localStorage.getItem('offline_tasks');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            offlineTasks = parsed.filter(t => t && (t.userId === userId || !t.userId)).map(t => ({ ...t, userId }));
+          }
+        }
       } catch (e) {
         offlineTasks = [];
       }
