@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { TaskCard } from '../components/TaskCard';
+import { TaskListSkeleton, StatsSkeleton } from '../components/TaskSkeleton';
 import { StudyTask } from '../types';
 import {
   toggleTaskCompletion,
@@ -29,7 +30,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask, onStartStudy }) => {
-  const { userProfile, tasks, updateTaskInState, deleteTaskInState } = useAuth();
+  const { userProfile, tasks, tasksLoading, updateTaskInState, deleteTaskInState } = useAuth();
 
   const todayStr = getTodayDateString();
   const todayDate = new Date();
@@ -179,7 +180,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
               </span>
             </div>
 
-            {sortedTodayTasks.length > 0 ? (
+            {tasksLoading ? (
+              <TaskListSkeleton count={3} />
+            ) : sortedTodayTasks.length > 0 ? (
               <div className="space-y-3">
                 {sortedTodayTasks.map(task => (
                   <TaskCard

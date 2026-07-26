@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { TaskCard } from '../components/TaskCard';
+import { TaskListSkeleton } from '../components/TaskSkeleton';
 import { StudyTask } from '../types';
 import {
   toggleTaskCompletion,
@@ -16,7 +17,7 @@ interface MissedTasksProps {
 }
 
 export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStudy }) => {
-  const { tasks, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
+  const { tasks, tasksLoading, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
   const todayStr = getTodayDateString();
 
   // Filter all missed tasks
@@ -96,7 +97,9 @@ export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStu
       </div>
 
       {/* List */}
-      {missedTasks.length > 0 ? (
+      {tasksLoading ? (
+        <TaskListSkeleton count={3} />
+      ) : missedTasks.length > 0 ? (
         <div className="space-y-3">
           {missedTasks.map(task => (
             <TaskCard

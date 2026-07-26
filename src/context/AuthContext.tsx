@@ -27,6 +27,7 @@ interface AuthContextType {
   userProfile: UserProfile | null;
   tasks: StudyTask[];
   loading: boolean;
+  tasksLoading: boolean;
   signup: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
@@ -43,10 +44,22 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const loadCachedTasks = (): StudyTask[] => {
+  try {
+    const raw = localStorage.getItem('offline_tasks');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [tasks, setTasks] = useState<StudyTask[]>([]);
+  const [tasks, setTasks] = useState<StudyTask[]>(loadCachedTasks);
+  const [tasksLoading, setTasksLoading] = useState<boolean>(() => loadCachedTasks().length === 0);
   const [loading, setLoading] = useState<boolean>(true);
 
   // Sync or create user document in Firestore
@@ -124,32 +137,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribeAuth = onAuthStateChanged(auth, async user => {
       setCurrentUser(user);
       if (user) {
-        try {
-          const profile = await ensureUserProfile(user);
+        // Run ensureUserProfile in background without delaying task loading
+        ensureUserProfile(user).catch(err => console.warn('Background ensureUserProfile:', err));
 
-          // Subscribe to user tasks
-          unsubscribeTasks = subscribeToUserTasks(user.uid, async userTasks => {
-            // Clean up any remaining initial dummy sample tasks
-            await cleanupDummyTasks(userTasks);
-            const realTasks = userTasks.filter(
-              t =>
-                ![
-                  'Advanced Calculus Integration',
-                  'Organic Chemistry - Alkyl Halides',
-                  'Literature Review - The Great Gatsby',
-                ].includes(t.title)
-            );
-            setTasks(realTasks);
-            // Auto check missed tasks & update streak
-            const updatedStreak = await checkAndSyncMissedTasksAndStreak(user.uid, realTasks);
-            setUserProfile(prev => (prev ? { ...prev, currentStreak: updatedStreak } : prev));
-          });
-        } catch (err) {
-          console.error('Error initializing user profile:', err);
-        }
+        // Subscribe to user tasks immediately
+        if (unsubscribeTasks) unsubscribeTasks();
+        unsubscribeTasks = subscribeToUserTasks(user.uid, userTasks => {
+          const realTasks = userTasks.filter(
+            t =>
+              ![
+                'Advanced Calculus Integration',
+                'Organic Chemistry - Alkyl Halides',
+                'Literature Review - The Great Gatsby',
+              ].includes(t.title)
+          );
+          setTasks(realTasks);
+          setTasksLoading(false);
+          try {
+            localStorage.setItem('offline_tasks', JSON.stringify(realTasks));
+          } catch (e) {}
+        });
       } else {
         setUserProfile(null);
-        setTasks([]);
         if (unsubscribeTasks) unsubscribeTasks();
       }
       setLoading(false);
@@ -204,18 +213,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addTaskToState = (task: StudyTask) => {
     setTasks(prev => {
       if (prev.some(t => t.id === task.id)) return prev;
-      return [task, ...prev];
+      const next = [task, ...prev];
+      try {
+        localStorage.setItem('offline_tasks', JSON.stringify(next));
+      } catch (e) {}
+      return next;
     });
   };
 
   const updateTaskInState = (taskId: string, updates: Partial<StudyTask>) => {
-    setTasks(prev =>
-      prev.map(t => (t.id === taskId ? { ...t, ...updates } : t))
-    );
+    setTasks(prev => {
+      const next = prev.map(t => (t.id === taskId ? { ...t, ...updates } : t));
+      try {
+        localStorage.setItem('offline_tasks', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
   };
 
   const deleteTaskInState = (taskId: string) => {
-    setTasks(prev => prev.filter(t => t.id !== taskId));
+    setTasks(prev => {
+      const next = prev.filter(t => t.id !== taskId);
+      try {
+        localStorage.setItem('offline_tasks', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
   };
 
   const logout = async () => {
@@ -270,6 +293,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         userProfile,
         tasks,
         loading,
+        tasksLoading,
         signup,
         login,
         loginWithGoogle,

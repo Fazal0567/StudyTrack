@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { ProgressBar } from '../components/ProgressBar';
+import { StatsSkeleton } from '../components/TaskSkeleton';
 import { BarChart3, CheckCircle2, Clock, Calendar, Award, Flame, ChevronRight, TrendingUp } from 'lucide-react';
 import { format, subDays, parseISO, isSameDay } from 'date-fns';
 import { getTodayDateString } from '../services/taskService';
 
 export const ProgressView: React.FC = () => {
-  const { userProfile, tasks } = useAuth();
+  const { userProfile, tasks, tasksLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'daily' | 'all-time'>('daily');
 
   const todayStr = getTodayDateString();
@@ -127,7 +128,12 @@ export const ProgressView: React.FC = () => {
         </div>
       </div>
 
-      {activeTab === 'daily' ? (
+      {tasksLoading ? (
+        <div className="space-y-6">
+          <StatsSkeleton />
+          <div className="h-48 bg-slate-100 dark:bg-slate-800 rounded-3xl animate-pulse" />
+        </div>
+      ) : activeTab === 'daily' ? (
         <>
           {/* Today's Daily Progress Hero Card */}
           <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-6 text-white shadow-lg shadow-blue-200 dark:shadow-none">

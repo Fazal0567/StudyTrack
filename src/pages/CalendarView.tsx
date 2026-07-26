@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { TaskCard } from '../components/TaskCard';
+import { TaskListSkeleton } from '../components/TaskSkeleton';
 import { StudyTask } from '../types';
 import {
   toggleTaskCompletion,
@@ -42,7 +43,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
   onEditTask,
   onStartStudy,
 }) => {
-  const { tasks, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
+  const { tasks, tasksLoading, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
 
@@ -245,7 +246,9 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               </div>
             </div>
 
-            {selectedDateTasks.length > 0 ? (
+            {tasksLoading ? (
+              <TaskListSkeleton count={2} />
+            ) : selectedDateTasks.length > 0 ? (
               <div className="space-y-3">
                 <div className="flex justify-end mb-2">
                   {onOpenAddModal && (

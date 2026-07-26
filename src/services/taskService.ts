@@ -94,11 +94,12 @@ export const subscribeToUserTasks = (
       }
 
       const allTasksMap = new Map<string, StudyTask>();
-      tasks.forEach(t => allTasksMap.set(t.id, t));
+      // Put offline tasks first, then overwrite/merge with Firestore snapshot tasks
       offlineTasks.forEach(t => {
-        if (!allTasksMap.has(t.id)) {
-          allTasksMap.set(t.id, t);
-        }
+        if (t && t.id) allTasksMap.set(t.id, t);
+      });
+      tasks.forEach(t => {
+        if (t && t.id) allTasksMap.set(t.id, t);
       });
 
       const allTasks = Array.from(allTasksMap.values());

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { TaskCard } from '../components/TaskCard';
+import { TaskListSkeleton } from '../components/TaskSkeleton';
 import { StudyTask } from '../types';
 import {
   toggleTaskCompletion,
@@ -21,7 +22,7 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
   onEditTask,
   onStartStudy,
 }) => {
-  const { tasks, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
+  const { tasks, tasksLoading, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Completed'>('All');
 
   const todayStr = getTodayDateString();
@@ -131,7 +132,9 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
       </div>
 
       {/* Task List */}
-      {sortedTasks.length > 0 ? (
+      {tasksLoading ? (
+        <TaskListSkeleton count={4} />
+      ) : sortedTasks.length > 0 ? (
         <div className="space-y-3">
           {sortedTasks.map(task => (
             <TaskCard
