@@ -5,6 +5,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInAnonymously,
   signOut,
   sendPasswordResetEmail,
   updateProfile,
@@ -16,6 +17,7 @@ import { UserProfile, StudyTask } from '../types';
 import {
   subscribeToUserTasks,
   checkAndSyncMissedTasksAndStreak,
+  calculateCurrentStreak,
   getTodayDateString,
   cleanupDummyTasks,
 } from '../services/taskService';
@@ -28,11 +30,15 @@ interface AuthContextType {
   signup: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
+  loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   changePassword: (newPassword: string) => Promise<void>;
   updateUserProfile: (updates: Partial<UserProfile>) => Promise<void>;
   refreshTasks: () => void;
+  addTaskToState: (task: StudyTask) => void;
+  updateTaskInState: (taskId: string, updates: Partial<StudyTask>) => void;
+  deleteTaskInState: (taskId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -155,6 +161,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  // Recalculate streak in real-time whenever tasks state changes
+  useEffect(() => {
+    if (userProfile && tasks) {
+      const calculatedStreak = calculateCurrentStreak(tasks);
+      if (userProfile.currentStreak !== calculatedStreak) {
+        setUserProfile(prev => (prev ? { ...prev, currentStreak: calculatedStreak } : prev));
+        if (currentUser) {
+          const userRef = doc(db, 'users', currentUser.uid);
+          updateDoc(userRef, { currentStreak: calculatedStreak }).catch(() => {});
+        }
+      }
+    }
+  }, [tasks, currentUser]);
+
   const signup = async (email: string, password: string, name: string) => {
     const res = await createUserWithEmailAndPassword(auth, email, password);
     if (res.user) {
@@ -172,6 +192,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.user) {
       await ensureUserProfile(res.user);
     }
+  };
+
+  const loginAsGuest = async () => {
+    const res = await signInAnonymously(auth);
+    if (res.user) {
+      await ensureUserProfile(res.user, 'Guest Student');
+    }
+  };
+
+  const addTaskToState = (task: StudyTask) => {
+    setTasks(prev => {
+      if (prev.some(t => t.id === task.id)) return prev;
+      return [task, ...prev];
+    });
+  };
+
+  const updateTaskInState = (taskId: string, updates: Partial<StudyTask>) => {
+    setTasks(prev =>
+      prev.map(t => (t.id === taskId ? { ...t, ...updates } : t))
+    );
+  };
+
+  const deleteTaskInState = (taskId: string) => {
+    setTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
   const logout = async () => {
@@ -229,11 +273,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signup,
         login,
         loginWithGoogle,
+        loginAsGuest,
         logout,
         resetPassword,
         changePassword,
         updateUserProfile,
         refreshTasks,
+        addTaskToState,
+        updateTaskInState,
+        deleteTaskInState,
       }}
     >
       {children}

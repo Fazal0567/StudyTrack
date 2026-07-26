@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BookOpen, Mail, Lock, LogIn, AlertCircle } from 'lucide-react';
+import { BookOpen, Mail, Lock, LogIn, AlertCircle, UserCheck } from 'lucide-react';
 import { getFriendlyAuthErrorMessage } from '../utils/authErrors';
 
 export const Login: React.FC = () => {
@@ -10,7 +10,7 @@ export const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, loginAsGuest } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -37,6 +37,19 @@ export const Login: React.FC = () => {
       setError('');
       setLoading(true);
       await loginWithGoogle();
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(getFriendlyAuthErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGuestSignIn = async () => {
+    try {
+      setError('');
+      setLoading(true);
+      await loginAsGuest();
       navigate('/dashboard');
     } catch (err: any) {
       setError(getFriendlyAuthErrorMessage(err));
@@ -162,6 +175,16 @@ export const Login: React.FC = () => {
                 />
               </svg>
               Sign in with Google
+            </button>
+
+            <button
+              type="button"
+              onClick={handleGuestSignIn}
+              disabled={loading}
+              className="mt-2.5 w-full py-2.5 px-4 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-semibold text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 focus:ring-2 focus:ring-blue-500 transition-colors flex items-center justify-center gap-2 shadow-xs"
+            >
+              <UserCheck size={18} />
+              Continue as Guest (Instant Access)
             </button>
           </div>
 

@@ -23,7 +23,7 @@ import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
 
 interface OutletContextType {
-  handleOpenAddModal: () => void;
+  handleOpenAddModal: (dateStr?: string) => void;
   handleOpenEditModal: (task: StudyTask) => void;
   handleStartStudy: (task: StudyTask) => void;
 }
@@ -31,10 +31,11 @@ interface OutletContextType {
 const useOutletContextTyped = () => useOutletContext<OutletContextType>();
 
 const AppLayout: React.FC = () => {
-  const { currentUser, tasks } = useAuth();
+  const { currentUser, tasks, addTaskToState, updateTaskInState } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<StudyTask | null>(null);
+  const [preselectedDate, setPreselectedDate] = useState<string | undefined>(undefined);
 
   // Timer modal state
   const [focusTask, setFocusTask] = useState<StudyTask | null>(null);
@@ -44,13 +45,18 @@ const AppLayout: React.FC = () => {
   const pendingCount = tasks.filter(t => t.date === todayStr && t.status === 'Pending').length;
   const missedCount = tasks.filter(t => t.status === 'Missed').length;
 
-  const handleOpenAddModal = () => {
+  const handleOpenAddModal = (dateStr?: string) => {
+    const validDateStr = typeof dateStr === 'string' ? dateStr : undefined;
+    setSidebarOpen(false);
     setEditingTask(null);
+    setPreselectedDate(validDateStr);
     setTaskModalOpen(true);
   };
 
   const handleOpenEditModal = (task: StudyTask) => {
+    setSidebarOpen(false);
     setEditingTask(task);
+    setPreselectedDate(undefined);
     setTaskModalOpen(true);
   };
 
@@ -62,19 +68,21 @@ const AppLayout: React.FC = () => {
   const handleSaveTask = async (
     taskData: Omit<StudyTask, 'id' | 'userId' | 'createdAt'>
   ) => {
-    if (!currentUser) return;
+    const userId = currentUser?.uid || 'guest_user';
 
     if (editingTask) {
       await updateStudyTask(editingTask.id, taskData);
+      updateTaskInState(editingTask.id, taskData);
     } else {
-      await createStudyTask(currentUser.uid, taskData);
+      const created = await createStudyTask(userId, taskData);
+      addTaskToState(created);
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 flex flex-col transition-colors max-w-full overflow-x-hidden">
       <Navbar
-        onOpenAddModal={handleOpenAddModal}
+        onOpenAddModal={() => handleOpenAddModal()}
         toggleSidebar={() => setSidebarOpen(!sidebarOpen)}
       />
 
@@ -96,6 +104,7 @@ const AppLayout: React.FC = () => {
         onClose={() => setTaskModalOpen(false)}
         onSave={handleSaveTask}
         initialTask={editingTask}
+        initialDate={preselectedDate}
       />
 
       <StudyTimerModal
@@ -112,7 +121,7 @@ const DashboardWrapper: React.FC = () => {
   const { handleOpenAddModal, handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
   return (
     <Dashboard
-      onOpenAddModal={handleOpenAddModal}
+      onOpenAddModal={() => handleOpenAddModal()}
       onEditTask={handleOpenEditModal}
       onStartStudy={handleStartStudy}
     />
@@ -123,7 +132,7 @@ const TodaysTasksWrapper: React.FC = () => {
   const { handleOpenAddModal, handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
   return (
     <TodaysTasks
-      onOpenAddModal={handleOpenAddModal}
+      onOpenAddModal={() => handleOpenAddModal()}
       onEditTask={handleOpenEditModal}
       onStartStudy={handleStartStudy}
     />
@@ -141,9 +150,10 @@ const MissedTasksWrapper: React.FC = () => {
 };
 
 const CalendarWrapper: React.FC = () => {
-  const { handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
+  const { handleOpenAddModal, handleOpenEditModal, handleStartStudy } = useOutletContextTyped();
   return (
     <CalendarView
+      onOpenAddModal={handleOpenAddModal}
       onEditTask={handleOpenEditModal}
       onStartStudy={handleStartStudy}
     />

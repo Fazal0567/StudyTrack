@@ -1,15 +1,16 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { Sun, Moon, BookOpen, User as UserIcon, Menu } from 'lucide-react';
+import { Sun, Moon, BookOpen, User as UserIcon, Menu, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { StreakBadge } from './StreakBadge';
 
 interface NavbarProps {
-  onOpenAddModal?: () => void;
+  onOpenAddModal: () => void;
   toggleSidebar: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ toggleSidebar }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onOpenAddModal, toggleSidebar }) => {
   const { userProfile } = useAuth();
   const { theme, toggleTheme } = useTheme();
 
@@ -38,6 +39,21 @@ export const Navbar: React.FC<NavbarProps> = ({ toggleSidebar }) => {
 
         {/* Right Side Controls */}
         <div className="flex items-center gap-1.5 sm:gap-3">
+          {/* Daily Streak Badge */}
+          <div className="hidden xs:block">
+            <StreakBadge streak={userProfile?.currentStreak || 0} size="sm" />
+          </div>
+
+          {/* Add Target Button */}
+          <button
+            onClick={onOpenAddModal}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs transition-colors shrink-0"
+            title="Add a new study target"
+          >
+            <Plus size={16} />
+            <span className="hidden xs:inline sm:inline">Add Target</span>
+          </button>
+
           {/* Theme Toggle */}
           <button
             onClick={toggleTheme}

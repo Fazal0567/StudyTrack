@@ -28,15 +28,21 @@ import {
   Clock,
   AlertCircle,
   Sparkles,
+  Plus,
 } from 'lucide-react';
 
 interface CalendarViewProps {
+  onOpenAddModal?: (dateStr?: string) => void;
   onEditTask: (task: StudyTask) => void;
   onStartStudy?: (task: StudyTask) => void;
 }
 
-export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartStudy }) => {
-  const { tasks, userProfile } = useAuth();
+export const CalendarView: React.FC<CalendarViewProps> = ({
+  onOpenAddModal,
+  onEditTask,
+  onStartStudy,
+}) => {
+  const { tasks, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
 
@@ -57,6 +63,11 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartS
   const missedCount = selectedDateTasks.filter(t => t.status === 'Missed').length;
 
   const handleToggleComplete = async (task: StudyTask) => {
+    const isNowCompleted = task.status !== 'Completed';
+    updateTaskInState(task.id, {
+      status: isNowCompleted ? 'Completed' : 'Pending',
+      completedAt: isNowCompleted ? new Date().toISOString() : undefined,
+    });
     try {
       await toggleTaskCompletion(task, userProfile);
     } catch (err) {
@@ -65,6 +76,7 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartS
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    deleteTaskInState(taskId);
     try {
       await deleteStudyTask(taskId);
     } catch (err) {
@@ -83,14 +95,25 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartS
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-          <CalendarIcon className="text-blue-600 dark:text-blue-400" size={26} />
-          Study Targets Calendar
-        </h1>
-        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Review your daily study targets across the month. Select any day to inspect completed, pending, and missed goals.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+            <CalendarIcon className="text-blue-600 dark:text-blue-400" size={26} />
+            Study Targets Calendar
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+            Review your daily study targets across the month or pick any date to add new targets.
+          </p>
+        </div>
+        {onOpenAddModal && (
+          <button
+            onClick={() => onOpenAddModal(selectedDateStr)}
+            className="flex items-center gap-1.5 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-sm transition-colors self-start sm:self-auto"
+          >
+            <Plus size={16} />
+            <span>Add Target for {format(selectedDate, 'MMM d')}</span>
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -224,6 +247,17 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartS
 
             {selectedDateTasks.length > 0 ? (
               <div className="space-y-3">
+                <div className="flex justify-end mb-2">
+                  {onOpenAddModal && (
+                    <button
+                      onClick={() => onOpenAddModal(selectedDateStr)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors"
+                    >
+                      <Plus size={14} />
+                      <span>Add Target for this Day</span>
+                    </button>
+                  )}
+                </div>
                 {selectedDateTasks.map(task => (
                   <TaskCard
                     key={task.id}
@@ -237,11 +271,20 @@ export const CalendarView: React.FC<CalendarViewProps> = ({ onEditTask, onStartS
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center space-y-2">
+              <div className="py-8 text-center space-y-3">
                 <Sparkles className="mx-auto text-slate-300 dark:text-slate-600" size={28} />
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  No study targets recorded for this date.
+                  No study targets recorded for {format(selectedDate, 'MMM d, yyyy')}.
                 </p>
+                {onOpenAddModal && (
+                  <button
+                    onClick={() => onOpenAddModal(selectedDateStr)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-xs"
+                  >
+                    <Plus size={16} />
+                    <span>Add Target for {format(selectedDate, 'MMM d')}</span>
+                  </button>
+                )}
               </div>
             )}
           </div>

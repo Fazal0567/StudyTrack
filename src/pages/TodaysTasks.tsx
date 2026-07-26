@@ -21,7 +21,7 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
   onEditTask,
   onStartStudy,
 }) => {
-  const { tasks, userProfile } = useAuth();
+  const { tasks, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Completed'>('All');
 
   const todayStr = getTodayDateString();
@@ -44,6 +44,11 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
   });
 
   const handleToggleComplete = async (task: StudyTask) => {
+    const isNowCompleted = task.status !== 'Completed';
+    updateTaskInState(task.id, {
+      status: isNowCompleted ? 'Completed' : 'Pending',
+      completedAt: isNowCompleted ? new Date().toISOString() : undefined,
+    });
     try {
       await toggleTaskCompletion(task, userProfile);
     } catch (err) {
@@ -52,6 +57,7 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    deleteTaskInState(taskId);
     try {
       await deleteStudyTask(taskId);
     } catch (err) {
@@ -60,6 +66,10 @@ export const TodaysTasks: React.FC<TodaysTasksProps> = ({
   };
 
   const handleCarryForward = async (taskId: string) => {
+    updateTaskInState(taskId, {
+      date: todayStr,
+      status: 'Pending',
+    });
     try {
       await carryForwardTask(taskId, todayStr);
     } catch (err) {

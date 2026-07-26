@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { subDays, format } from 'date-fns';
 import {
   requestBrowserNotificationPermission,
   getNotificationPermissionStatus,
@@ -21,6 +22,10 @@ import {
   Sparkles,
   ExternalLink,
   Info,
+  Calendar,
+  Filter,
+  BarChart3,
+  FileText,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
@@ -45,9 +50,110 @@ export const SettingsPage: React.FC = () => {
     mode: 'simulation',
   });
 
+  // Custom Email Report Builder State
+  const [selectedReportType, setSelectedReportType] = useState<'morning' | 'evening' | 'night' | 'progress_report'>('progress_report');
+  const [selectedTaskFilter, setSelectedTaskFilter] = useState<'all' | 'completed' | 'pending'>('all');
+  const [selectedDateRange, setSelectedDateRange] = useState<'today' | 'yesterday' | 'specific' | 'all'>('today');
+  const [customDate, setCustomDate] = useState<string>(new Date().toISOString().split('T')[0]);
+
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState<boolean>(
     userProfile?.emailNotifications ?? true
   );
+
+  const getFilteredTaskData = () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const yesterdayStr = format(subDays(new Date(), 1), 'yyyy-MM-dd');
+
+    let tasksForDate = tasks;
+    let dateLabel = 'Today';
+
+    if (selectedDateRange === 'today') {
+      tasksForDate = tasks.filter(t => t.date === todayStr);
+      dateLabel = `Today (${todayStr})`;
+    } else if (selectedDateRange === 'yesterday') {
+      tasksForDate = tasks.filter(t => t.date === yesterdayStr);
+      dateLabel = `Yesterday (${yesterdayStr})`;
+    } else if (selectedDateRange === 'specific') {
+      tasksForDate = tasks.filter(t => t.date === customDate);
+      dateLabel = customDate || todayStr;
+    } else if (selectedDateRange === 'all') {
+      tasksForDate = tasks;
+      dateLabel = 'All Dates';
+    }
+
+    let finalTasks = tasksForDate;
+    if (selectedTaskFilter === 'completed') {
+      finalTasks = tasksForDate.filter(t => t.status === 'Completed');
+    } else if (selectedTaskFilter === 'pending') {
+      finalTasks = tasksForDate.filter(t => t.status === 'Pending');
+    }
+
+    const completedCount = tasksForDate.filter(t => t.status === 'Completed').length;
+    const totalCount = tasksForDate.length;
+    const pendingCount = tasksForDate.filter(t => t.status === 'Pending').length;
+    const totalStudyMinutes = tasksForDate
+      .filter(t => t.status === 'Completed')
+      .reduce((acc, t) => acc + (t.estimatedTime || 0), 0);
+    const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+    return {
+      filteredTasks: finalTasks,
+      dateLabel,
+      totalCount,
+      completedCount,
+      pendingCount,
+      totalStudyMinutes,
+      completionRate,
+    };
+  };
+
+  const handleSendCustomEmailReport = async () => {
+    if (!userProfile?.email) return;
+
+    try {
+      setTestingEmail(true);
+      setEmailStatusMsg('');
+      setEmailPreviewUrl(null);
+
+      const {
+        filteredTasks,
+        dateLabel,
+        totalCount,
+        completedCount,
+        pendingCount,
+        totalStudyMinutes,
+        completionRate,
+      } = getFilteredTaskData();
+
+      const res = await sendEmailReminder({
+        toEmail: userProfile.email,
+        userName: userProfile.name,
+        reminderType: selectedReportType,
+        taskFilter: selectedTaskFilter,
+        targetDate: selectedDateRange === 'specific' ? customDate : selectedDateRange,
+        targetDateLabel: dateLabel,
+        tasks: filteredTasks,
+        stats: {
+          totalTasks: totalCount,
+          completedCount,
+          pendingCount,
+          totalStudyMinutes,
+          currentStreak: userProfile.currentStreak || 0,
+          completionRate,
+        },
+        emailNotificationsEnabled,
+      });
+
+      setEmailStatusMsg(res.message);
+      if (res.previewUrl) {
+        setEmailPreviewUrl(res.previewUrl);
+      }
+    } catch (err: any) {
+      setEmailStatusMsg(err.message || 'Failed to dispatch email report');
+    } finally {
+      setTestingEmail(false);
+    }
+  };
 
   useEffect(() => {
     if (userProfile?.emailNotifications !== undefined) {
@@ -87,33 +193,7 @@ export const SettingsPage: React.FC = () => {
     triggerReminder(type, pendingCount);
   };
 
-  const handleTestEmailDispatch = async (type: 'morning' | 'evening' | 'night') => {
-    if (!userProfile?.email) return;
 
-    try {
-      setTestingEmail(true);
-      setEmailStatusMsg('');
-      setEmailPreviewUrl(null);
-      const todayTasks = tasks.filter(t => t.date === new Date().toISOString().split('T')[0]);
-
-      const res = await sendEmailReminder({
-        toEmail: userProfile.email,
-        userName: userProfile.name,
-        reminderType: type,
-        tasks: todayTasks,
-        emailNotificationsEnabled: emailNotificationsEnabled,
-      });
-
-      setEmailStatusMsg(res.message);
-      if (res.previewUrl) {
-        setEmailPreviewUrl(res.previewUrl);
-      }
-    } catch (err: any) {
-      setEmailStatusMsg(err.message || 'Failed to dispatch email reminder');
-    } finally {
-      setTestingEmail(false);
-    }
-  };
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -363,36 +443,119 @@ export const SettingsPage: React.FC = () => {
           </div>
         )}
 
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-700 space-y-2">
-          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-            Dispatch Test Email Reminder
-          </span>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => handleTestEmailDispatch('morning')}
-              disabled={testingEmail}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg flex items-center gap-1 disabled:opacity-50"
-            >
-              <Send size={12} />
-              Morning Email
-            </button>
-            <button
-              onClick={() => handleTestEmailDispatch('evening')}
-              disabled={testingEmail}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg flex items-center gap-1 disabled:opacity-50"
-            >
-              <Send size={12} />
-              Evening Email
-            </button>
-            <button
-              onClick={() => handleTestEmailDispatch('night')}
-              disabled={testingEmail}
-              className="px-3 py-1.5 text-xs font-medium bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-lg flex items-center gap-1 disabled:opacity-50"
-            >
-              <Send size={12} />
-              Night Email
-            </button>
+
+
+        {/* Custom Email Report Configurator */}
+        <div className="pt-4 border-t border-slate-100 dark:border-slate-700 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <Filter size={15} className="text-blue-600 dark:text-blue-400" />
+              Custom Email Report Builder
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+              Select date, task status, & report style
+            </span>
           </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* 1. Report Type Selection */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                Report Format
+              </label>
+              <select
+                value={selectedReportType}
+                onChange={e => setSelectedReportType(e.target.value as any)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="progress_report">📊 Full Progress Report</option>
+                <option value="morning">🌅 Morning Target Plan</option>
+                <option value="evening">🌇 Evening Check-in</option>
+                <option value="night">🌙 Night Summary</option>
+              </select>
+            </div>
+
+            {/* 2. Task Status Filter */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                Filter Task Status
+              </label>
+              <select
+                value={selectedTaskFilter}
+                onChange={e => setSelectedTaskFilter(e.target.value as any)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="all">📌 All Targets</option>
+                <option value="completed">✅ Completed Targets Only</option>
+                <option value="pending">⏳ Non-Completed (Pending) Only</option>
+              </select>
+            </div>
+
+            {/* 3. Target Date Selection */}
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                Date Range
+              </label>
+              <select
+                value={selectedDateRange}
+                onChange={e => setSelectedDateRange(e.target.value as any)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="specific">Specific Date...</option>
+                <option value="all">All Dates (All-Time)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Specific Date Picker (when 'specific' selected) */}
+          {selectedDateRange === 'specific' && (
+            <div className="p-3 bg-blue-50/50 dark:bg-blue-950/30 rounded-xl border border-blue-100 dark:border-blue-900 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-blue-900 dark:text-blue-200">
+                <Calendar size={15} />
+                <span>Choose Specific Date:</span>
+              </div>
+              <input
+                type="date"
+                value={customDate}
+                onChange={e => setCustomDate(e.target.value)}
+                className="px-3 py-1 rounded-lg border border-blue-200 dark:border-blue-800 bg-white dark:bg-slate-900 text-xs font-bold text-slate-900 dark:text-slate-100 outline-none"
+              />
+            </div>
+          )}
+
+          {/* Live Filter Summary Badge & Action Button */}
+          {(() => {
+            const data = getFilteredTaskData();
+            return (
+              <div className="bg-slate-50 dark:bg-slate-900/50 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="text-xs text-slate-600 dark:text-slate-300">
+                  <span className="font-extrabold text-slate-900 dark:text-white">Selected Digest Summary: </span>
+                  <span className="font-bold text-blue-600 dark:text-blue-400">
+                    {data.filteredTasks.length} target(s)
+                  </span>{' '}
+                  found for <span className="font-bold">{data.dateLabel}</span> (
+                  {selectedTaskFilter === 'completed'
+                    ? 'Completed Only'
+                    : selectedTaskFilter === 'pending'
+                    ? 'Pending Only'
+                    : 'All Statuses'}
+                  )
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSendCustomEmailReport}
+                  disabled={testingEmail}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 shrink-0"
+                >
+                  <Send size={14} />
+                  <span>{testingEmail ? 'Dispatching Email...' : 'Send Selected Email Report'}</span>
+                </button>
+              </div>
+            );
+          })()}
         </div>
       </div>
 

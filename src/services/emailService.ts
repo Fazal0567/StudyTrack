@@ -3,8 +3,19 @@ import { StudyTask } from '../types';
 export interface EmailReminderPayload {
   toEmail: string;
   userName: string;
-  reminderType: 'morning' | 'evening' | 'night';
+  reminderType: 'morning' | 'evening' | 'night' | 'progress_report';
+  taskFilter?: 'all' | 'completed' | 'pending';
+  targetDate?: string;
+  targetDateLabel?: string;
   tasks: StudyTask[];
+  stats?: {
+    totalTasks: number;
+    completedCount: number;
+    pendingCount: number;
+    totalStudyMinutes: number;
+    currentStreak: number;
+    completionRate: number;
+  };
   emailNotificationsEnabled?: boolean;
 }
 

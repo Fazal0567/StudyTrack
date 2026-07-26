@@ -167,7 +167,17 @@ async function startServer() {
 
   // Scheduled / Manual Email Reminder Endpoint
   app.post('/api/send-email-reminder', async (req, res) => {
-    const { toEmail, userName, reminderType, tasks, emailNotificationsEnabled } = req.body;
+    const {
+      toEmail,
+      userName,
+      reminderType,
+      taskFilter,
+      targetDate,
+      targetDateLabel,
+      tasks,
+      stats,
+      emailNotificationsEnabled,
+    } = req.body;
 
     if (emailNotificationsEnabled === false) {
       return res.json({
@@ -190,11 +200,51 @@ async function startServer() {
       morning: '🌅 Morning Study Targets Plan',
       evening: '🌇 Evening Study Target Check-in',
       night: '🌙 Daily Study Target Wrap-up',
+      progress_report: '📊 Study Progress & Performance Report',
     };
 
-    const subject = typeTitles[reminderType] || '📚 Your StudyTrack Update';
+    let filterSubLabel = '';
+    if (taskFilter === 'completed') {
+      filterSubLabel = 'Completed Targets Only';
+    } else if (taskFilter === 'pending') {
+      filterSubLabel = 'Non-Completed (Pending) Targets Only';
+    } else {
+      filterSubLabel = 'All Targets';
+    }
+
+    const dateDisplay = targetDateLabel || targetDate || 'Today';
+    const subject =
+      reminderType === 'progress_report'
+        ? `📊 StudyTrack Progress Report (${dateDisplay}) - ${filterSubLabel}`
+        : `${typeTitles[reminderType] || '📚 Your StudyTrack Update'} (${dateDisplay})`;
+
     const pendingTasks = (tasks || []).filter((t: any) => t.status === 'Pending');
     const completedTasks = (tasks || []).filter((t: any) => t.status === 'Completed');
+
+    // Stats card HTML
+    let statsCardHtml = '';
+    if (stats) {
+      statsCardHtml = `
+        <div style="margin: 16px 0; padding: 16px; background-color: #f1f5f9; border-radius: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+          <div style="background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <div style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold;">Completion Rate</div>
+            <div style="color: #2563eb; font-size: 18px; font-weight: bold; margin-top: 2px;">${stats.completionRate || 0}%</div>
+          </div>
+          <div style="background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <div style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold;">Current Streak</div>
+            <div style="color: #d97706; font-size: 18px; font-weight: bold; margin-top: 2px;">🔥 ${stats.currentStreak || 0} Days</div>
+          </div>
+          <div style="background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <div style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold;">Completed / Total</div>
+            <div style="color: #166534; font-size: 16px; font-weight: bold; margin-top: 2px;">${stats.completedCount || 0} / ${stats.totalTasks || 0}</div>
+          </div>
+          <div style="background: #ffffff; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0;">
+            <div style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: bold;">Study Duration</div>
+            <div style="color: #4f46e5; font-size: 16px; font-weight: bold; margin-top: 2px;">⏱ ${stats.totalStudyMinutes || 0} mins</div>
+          </div>
+        </div>
+      `;
+    }
 
     let taskListHtml = '';
     if (tasks && tasks.length > 0) {
@@ -214,25 +264,27 @@ async function startServer() {
           }
 
           return `
-            <div style="padding: 12px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; color: #2563eb; background: #eff6ff; padding: 2px 6px; border-radius: 4px; margin-right: 6px;">
-                  ${t.subject || 'General'}
-                </span>
-                <span style="font-weight: 600; font-size: 14px; color: #0f172a;">${t.title}</span>
-                <div style="font-size: 12px; color: #64748b; margin-top: 2px;">
-                  ⏱ Est: ${t.estimatedTime || 30} mins ${t.dueTime ? `| ⏰ Due: ${t.dueTime}` : ''}
+            <div style="padding: 12px; border-bottom: 1px solid #f1f5f9;">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                  <span style="font-size: 11px; text-transform: uppercase; font-weight: bold; color: #2563eb; background: #eff6ff; padding: 2px 6px; border-radius: 4px; margin-right: 6px;">
+                    ${t.subject || 'General'}
+                  </span>
+                  <span style="font-weight: 600; font-size: 14px; color: #0f172a;">${t.title}</span>
                 </div>
+                <span style="font-size: 11px; font-weight: bold; padding: 3px 8px; border-radius: 12px; background-color: ${badgeBg}; color: ${badgeColor}; whitespace: nowrap;">
+                  ${t.status}
+                </span>
               </div>
-              <span style="font-size: 11px; font-weight: bold; padding: 4px 8px; border-radius: 12px; background-color: ${badgeBg}; color: ${badgeColor};">
-                ${t.status}
-              </span>
+              <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
+                ⏱ Est: ${t.estimatedTime || 30} mins | 📅 Date: ${t.date || 'Today'} ${t.dueTime ? `| ⏰ Due: ${t.dueTime}` : ''}
+              </div>
             </div>
           `;
         })
         .join('');
     } else {
-      taskListHtml = `<p style="color: #64748b; font-style: italic;">No targets listed for today yet.</p>`;
+      taskListHtml = `<p style="color: #64748b; font-style: italic; padding: 12px; margin: 0;">No matching target items found for this selection.</p>`;
     }
 
     try {
@@ -241,23 +293,27 @@ async function startServer() {
       const htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8fafc; padding: 24px; border-radius: 12px;">
           <div style="background-color: #2563eb; color: #ffffff; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 22px;">${subject}</h1>
-            <p style="margin: 4px 0 0 0; opacity: 0.9; font-size: 14px;">StudyTrack Daily Reminder</p>
+            <h1 style="margin: 0; font-size: 20px;">${subject}</h1>
+            <p style="margin: 4px 0 0 0; opacity: 0.9; font-size: 13px;">StudyTrack Notification System</p>
           </div>
           <div style="background-color: #ffffff; padding: 24px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0; border-top: none;">
             <p style="font-size: 15px; color: #1e293b;">Hi <strong>${userName || 'Student'}</strong>,</p>
             
             ${
-              reminderType === 'morning'
-                ? `<p style="font-size: 14px; color: #475569;">Good morning! Here is your study target list for today. Stay focused and conquer your goals!</p>`
+              reminderType === 'progress_report'
+                ? `<p style="font-size: 14px; color: #475569;">Here is your custom study progress report for <strong>${dateDisplay}</strong> (Filter: <em>${filterSubLabel}</em>). Total <strong>${tasks?.length || 0}</strong> target item(s) selected.</p>`
+                : reminderType === 'morning'
+                ? `<p style="font-size: 14px; color: #475569;">Good morning! Here is your study plan for <strong>${dateDisplay}</strong> (Filter: <em>${filterSubLabel}</em>). Total <strong>${tasks?.length || 0}</strong> target item(s) selected.</p>`
                 : reminderType === 'evening'
-                ? `<p style="font-size: 14px; color: #475569;">Evening check-in! You have <strong>${pendingTasks.length}</strong> pending target(s). Keep pushing!</p>`
-                : `<p style="font-size: 14px; color: #475569;">Day wrap-up! You completed <strong>${completedTasks.length}</strong> target(s) today. Unfinished tasks can be carried forward tomorrow!</p>`
+                ? `<p style="font-size: 14px; color: #475569;">Evening check-in report for <strong>${dateDisplay}</strong> (Filter: <em>${filterSubLabel}</em>). Total <strong>${tasks?.length || 0}</strong> target item(s) selected.</p>`
+                : `<p style="font-size: 14px; color: #475569;">Night summary wrap-up for <strong>${dateDisplay}</strong> (Filter: <em>${filterSubLabel}</em>). Total <strong>${tasks?.length || 0}</strong> target item(s) selected.</p>`
             }
+
+            ${statsCardHtml}
 
             <div style="margin: 20px 0; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
               <div style="background-color: #f1f5f9; padding: 10px 14px; font-weight: bold; font-size: 13px; color: #334155;">
-                Today's Targets (${tasks?.length || 0})
+                Selected Target Items (${tasks?.length || 0}) — ${filterSubLabel}
               </div>
               ${taskListHtml}
             </div>

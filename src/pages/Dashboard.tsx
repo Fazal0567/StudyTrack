@@ -29,7 +29,7 @@ interface DashboardProps {
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask, onStartStudy }) => {
-  const { userProfile, tasks } = useAuth();
+  const { userProfile, tasks, updateTaskInState, deleteTaskInState } = useAuth();
 
   const todayStr = getTodayDateString();
   const todayDate = new Date();
@@ -61,6 +61,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
   const weekDays = Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i));
 
   const handleToggleComplete = async (task: StudyTask) => {
+    const isNowCompleted = task.status !== 'Completed';
+    updateTaskInState(task.id, {
+      status: isNowCompleted ? 'Completed' : 'Pending',
+      completedAt: isNowCompleted ? new Date().toISOString() : undefined,
+    });
     try {
       await toggleTaskCompletion(task, userProfile);
     } catch (err) {
@@ -69,6 +74,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    deleteTaskInState(taskId);
     try {
       await deleteStudyTask(taskId);
     } catch (err) {
@@ -77,6 +83,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
   };
 
   const handleCarryForward = async (taskId: string) => {
+    updateTaskInState(taskId, {
+      date: todayStr,
+      status: 'Pending',
+    });
     try {
       await carryForwardTask(taskId, todayStr);
     } catch (err) {
@@ -251,7 +261,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
           {/* Progress Gauge Card */}
           <div className="bg-white dark:bg-slate-800 rounded-3xl p-6 shadow-xs border border-slate-100 dark:border-slate-700 flex-1 flex flex-col items-center justify-center min-h-[240px]">
             <h3 className="text-xs font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-4">
-              Overall Progress
+              Daily Basis Progress
             </h3>
             <div className="relative w-36 h-36 flex items-center justify-center">
               <svg className="w-full h-full transform -rotate-90">
@@ -284,12 +294,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onOpenAddModal, onEditTask
                   {completionPercentage}%
                 </span>
                 <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">
-                  COMPLETED
+                  TODAY
                 </span>
               </div>
             </div>
             <p className="mt-4 text-xs font-semibold text-slate-500 dark:text-slate-400 text-center px-2">
-              {completedToday.length} of {todayTasks.length} targets met. {pendingToday.length} left today!
+              {completedToday.length} of {todayTasks.length} targets met today. {pendingToday.length} remaining!
             </p>
           </div>
 

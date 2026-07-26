@@ -16,13 +16,18 @@ interface MissedTasksProps {
 }
 
 export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStudy }) => {
-  const { tasks, userProfile } = useAuth();
+  const { tasks, userProfile, updateTaskInState, deleteTaskInState } = useAuth();
   const todayStr = getTodayDateString();
 
   // Filter all missed tasks
   const missedTasks = tasks.filter(t => t.status === 'Missed');
 
   const handleToggleComplete = async (task: StudyTask) => {
+    const isNowCompleted = task.status !== 'Completed';
+    updateTaskInState(task.id, {
+      status: isNowCompleted ? 'Completed' : 'Pending',
+      completedAt: isNowCompleted ? new Date().toISOString() : undefined,
+    });
     try {
       await toggleTaskCompletion(task, userProfile);
     } catch (err) {
@@ -31,6 +36,7 @@ export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStu
   };
 
   const handleDeleteTask = async (taskId: string) => {
+    deleteTaskInState(taskId);
     try {
       await deleteStudyTask(taskId);
     } catch (err) {
@@ -39,6 +45,10 @@ export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStu
   };
 
   const handleCarryForward = async (taskId: string) => {
+    updateTaskInState(taskId, {
+      date: todayStr,
+      status: 'Pending',
+    });
     try {
       await carryForwardTask(taskId, todayStr);
     } catch (err) {
@@ -48,6 +58,10 @@ export const MissedTasks: React.FC<MissedTasksProps> = ({ onEditTask, onStartStu
 
   const handleCarryAllForward = async () => {
     for (const task of missedTasks) {
+      updateTaskInState(task.id, {
+        date: todayStr,
+        status: 'Pending',
+      });
       try {
         await carryForwardTask(task.id, todayStr);
       } catch (err) {

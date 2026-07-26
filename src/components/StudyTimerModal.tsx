@@ -16,7 +16,7 @@ import {
   Sparkles,
   AlertCircle,
 } from 'lucide-react';
-import { toggleTaskCompletion } from '../services/taskService';
+import { toggleTaskCompletion, updateStudyTask } from '../services/taskService';
 import { useAuth } from '../context/AuthContext';
 
 interface StudyTimerModalProps {
@@ -32,27 +32,44 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
   onClose,
   onTaskUpdated,
 }) => {
-  const { userProfile } = useAuth();
-  if (!isOpen || !task) return null;
+  const { userProfile, updateTaskInState } = useAuth();
 
-  // Time specified in minutes (default to task.estimatedTime)
-  const [specifiedMinutes, setSpecifiedMinutes] = useState<number>(task.estimatedTime || 25);
-  const [secondsRemaining, setSecondsRemaining] = useState<number>((task.estimatedTime || 25) * 60);
+  // Time specified in minutes
+  const [specifiedMinutes, setSpecifiedMinutes] = useState<number>(25);
+  const [secondsRemaining, setSecondsRemaining] = useState<number>(25 * 60);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [isCompleted, setIsCompleted] = useState<boolean>(task.status === 'Completed');
-  const [completing, setCompleting] = useState<boolean>(false);
+  const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Sync initial task state when modal opens or task changes
   useEffect(() => {
-    const mins = task.estimatedTime && task.estimatedTime > 0 ? task.estimatedTime : 25;
-    setSpecifiedMinutes(mins);
-    setSecondsRemaining(mins * 60);
-    setIsRunning(false);
-    setIsCompleted(task.status === 'Completed');
-  }, [task]);
+    if (task && isOpen) {
+      const mins = task.estimatedTime && task.estimatedTime > 0 ? task.estimatedTime : 25;
+      setSpecifiedMinutes(mins);
+      setSecondsRemaining(mins * 60);
+      setIsRunning(false);
+      setIsCompleted(task.status === 'Completed');
+    }
+  }, [task, isOpen]);
+
+  // Automatically mark task as completed when timer expires
+  useEffect(() => {
+    if (secondsRemaining === 0 && task && !isCompleted) {
+      setIsCompleted(true);
+      const nowISO = new Date().toISOString();
+      updateTaskInState(task.id, {
+        status: 'Completed',
+        completedAt: nowISO,
+      });
+      updateStudyTask(task.id, {
+        status: 'Completed',
+        completedAt: nowISO,
+      }).catch(err => console.error('Failed to auto mark task completed:', err));
+      if (onTaskUpdated) onTaskUpdated();
+    }
+  }, [secondsRemaining, task, isCompleted, updateTaskInState, onTaskUpdated]);
 
   // Web Audio sound generator for completion/chime
   const playChimeSound = () => {
@@ -106,6 +123,8 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
     };
   }, [isRunning, soundEnabled]);
 
+  if (!isOpen || !task) return null;
+
   const totalSeconds = specifiedMinutes * 60;
   const progressPercent =
     totalSeconds > 0 ? Math.min(100, Math.max(0, ((totalSeconds - secondsRemaining) / totalSeconds) * 100)) : 0;
@@ -144,21 +163,6 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
     setSpecifiedMinutes(mins);
     setIsRunning(false);
     setSecondsRemaining(mins * 60);
-  };
-
-  const handleMarkCompleted = async () => {
-    if (!task) return;
-    setCompleting(true);
-    try {
-      playChimeSound();
-      await toggleTaskCompletion(task, userProfile);
-      setIsCompleted(true);
-      if (onTaskUpdated) onTaskUpdated();
-    } catch (err) {
-      console.error('Failed to mark task completed:', err);
-    } finally {
-      setCompleting(false);
-    }
   };
 
   const priorityBadgeStyle = {
@@ -347,25 +351,13 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
               </button>
             </div>
 
-            {/* Complete Task Button */}
-            <button
-              onClick={handleMarkCompleted}
-              disabled={completing}
-              className={`w-full py-3 px-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 border transition-all ${
-                isCompleted
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
-                  : 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-transparent hover:opacity-90 shadow-sm'
-              }`}
-            >
-              <CheckCircle2 size={18} className={isCompleted ? 'text-emerald-600 dark:text-emerald-400' : ''} />
-              <span>
-                {completing
-                  ? 'Saving...'
-                  : isCompleted
-                  ? 'Target Completed! 🎉'
-                  : 'Mark Target as Completed'}
-              </span>
-            </button>
+            {/* Automatically Completed Status Banner */}
+            {isCompleted && (
+              <div className="w-full py-3 px-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/80 font-bold text-sm flex items-center justify-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400" />
+                <span>Target Automatically Completed! 🎉</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
