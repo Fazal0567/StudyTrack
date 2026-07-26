@@ -31,7 +31,7 @@ interface OutletContextType {
 const useOutletContextTyped = () => useOutletContext<OutletContextType>();
 
 const AppLayout: React.FC = () => {
-  const { currentUser, tasks, addTaskToState, updateTaskInState } = useAuth();
+  const { currentUser, userProfile, tasks, addTaskToState, updateTaskInState } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<StudyTask | null>(null);
@@ -69,12 +69,13 @@ const AppLayout: React.FC = () => {
     taskData: Omit<StudyTask, 'id' | 'userId' | 'createdAt'>
   ) => {
     const userId = currentUser?.uid || 'guest_user';
+    const userEmail = currentUser?.email || userProfile?.email || undefined;
 
     if (editingTask) {
       await updateStudyTask(editingTask.id, taskData);
       updateTaskInState(editingTask.id, taskData);
     } else {
-      const created = await createStudyTask(userId, taskData);
+      const created = await createStudyTask(userId, taskData, userEmail);
       addTaskToState(created);
     }
   };

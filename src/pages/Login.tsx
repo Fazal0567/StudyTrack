@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BookOpen, Mail, Lock, LogIn, AlertCircle, UserCheck } from 'lucide-react';
+import { BookOpen, Mail, Lock, LogIn, UserCheck } from 'lucide-react';
 import { getFriendlyAuthErrorMessage } from '../utils/authErrors';
+import { AuthErrorAlert } from '../components/AuthErrorAlert';
 
 export const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -36,7 +37,7 @@ export const Login: React.FC = () => {
     try {
       setError('');
       setLoading(true);
-      await loginWithGoogle();
+      await loginWithGoogle(email);
       navigate('/dashboard');
     } catch (err: any) {
       setError(getFriendlyAuthErrorMessage(err));
@@ -74,12 +75,7 @@ export const Login: React.FC = () => {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white dark:bg-slate-800 py-8 px-6 shadow-xl rounded-2xl border border-slate-200/80 dark:border-slate-700 sm:px-10">
-          {error && (
-            <div className="mb-4 p-3 bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 text-xs rounded-xl border border-rose-200 dark:border-rose-800 flex items-center gap-2">
-              <AlertCircle size={16} className="shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+          <AuthErrorAlert error={error} />
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

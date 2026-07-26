@@ -4,6 +4,7 @@ export type TaskStatus = 'Pending' | 'Completed' | 'Missed';
 export interface StudyTask {
   id: string;
   userId: string;
+  userEmail?: string;
   title: string;
   subject: string;
   estimatedTime: number; // in minutes

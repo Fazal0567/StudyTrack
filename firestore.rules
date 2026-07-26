@@ -3,14 +3,14 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // User profile documents
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if request.auth != null && (request.auth.uid == userId || (resource != null && resource.data.email == request.auth.token.email));
     }
     
     // Study task documents
     match /tasks/{taskId} {
-      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
-      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid || (resource.data.userEmail != null && resource.data.userEmail == request.auth.token.email));
+      allow create: if request.auth != null && (request.resource.data.userId == request.auth.uid || (request.resource.data.userEmail != null && request.resource.data.userEmail == request.auth.token.email));
+      allow update, delete: if request.auth != null && (resource.data.userId == request.auth.uid || (resource.data.userEmail != null && resource.data.userEmail == request.auth.token.email));
     }
   }
 }

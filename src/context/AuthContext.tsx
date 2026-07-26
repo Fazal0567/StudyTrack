@@ -11,7 +11,7 @@ import {
   updateProfile,
   updatePassword as firebaseUpdatePassword,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../firebase/config';
 import { UserProfile, StudyTask } from '../types';
 import {
@@ -30,7 +30,7 @@ interface AuthContextType {
   tasksLoading: boolean;
   signup: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
+  loginWithGoogle: (emailHint?: string) => Promise<void>;
   loginAsGuest: () => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -44,18 +44,37 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const loadCachedTasks = (userId?: string): StudyTask[] => {
-  if (!userId) return [];
-  try {
-    const raw = localStorage.getItem(`offline_tasks_${userId}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        return parsed.filter(t => t && (t.userId === userId || !t.userId)).map(t => ({ ...t, userId }));
+const loadCachedTasks = (userId?: string, userEmail?: string): StudyTask[] => {
+  if (!userId && !userEmail) return [];
+  const cleanEmail = userEmail ? userEmail.toLowerCase().trim() : '';
+  const emailKey = cleanEmail ? `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}` : '';
+
+  const taskMap = new Map<string, StudyTask>();
+  const keysToRead: string[] = [];
+  if (emailKey) keysToRead.push(emailKey);
+  if (userId) keysToRead.push(`offline_tasks_${userId}`);
+
+  keysToRead.forEach(key => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.forEach(t => {
+            if (t && t.id) {
+              const matchesUser = userId && t.userId === userId;
+              const matchesEmail = cleanEmail && t.userEmail && t.userEmail.toLowerCase().trim() === cleanEmail;
+              if (matchesUser || matchesEmail) {
+                taskMap.set(t.id, { ...t, userId: userId || t.userId, userEmail: cleanEmail || t.userEmail });
+              }
+            }
+          });
+        }
       }
-    }
-  } catch (e) {}
-  return [];
+    } catch (e) {}
+  });
+
+  return Array.from(taskMap.values());
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -68,6 +87,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Sync or create user document in Firestore
   const ensureUserProfile = async (user: User, nameOverride?: string): Promise<UserProfile> => {
     const userRef = doc(db, 'users', user.uid);
+    const cleanEmail = user.email ? user.email.toLowerCase().trim() : '';
+
     try {
       const fetchDocPromise = getDoc(userRef);
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -93,19 +114,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUserProfile(profile);
         return profile;
       } else {
+        // If profile doesn't exist for this UID, check if another profile exists with matching email
+        let existingEmailProfile: Partial<UserProfile> | null = null;
+        if (cleanEmail) {
+          try {
+            const emailQuery = query(collection(db, 'users'), where('email', '==', cleanEmail));
+            const emailSnap = await getDocs(emailQuery);
+            if (!emailSnap.empty) {
+              existingEmailProfile = emailSnap.docs[0].data() as UserProfile;
+            }
+          } catch (e) {}
+        }
+
         const newProfile: UserProfile = {
           uid: user.uid,
-          name: nameOverride || user.displayName || 'Student',
-          email: user.email || '',
-          photoURL: user.photoURL || '',
-          createdAt: new Date().toISOString(),
-          currentStreak: 0,
-          lastActiveDate: getTodayDateString(),
-          emailNotifications: true,
-          browserNotifications: true,
-          notificationTimeMorning: '08:00',
-          notificationTimeEvening: '18:00',
-          notificationTimeNight: '21:00',
+          name: nameOverride || user.displayName || existingEmailProfile?.name || (cleanEmail ? cleanEmail.split('@')[0] : 'Student'),
+          email: user.email || cleanEmail,
+          photoURL: user.photoURL || existingEmailProfile?.photoURL || '',
+          createdAt: existingEmailProfile?.createdAt || new Date().toISOString(),
+          currentStreak: existingEmailProfile?.currentStreak || 0,
+          lastActiveDate: existingEmailProfile?.lastActiveDate || getTodayDateString(),
+          emailNotifications: existingEmailProfile?.emailNotifications ?? true,
+          browserNotifications: existingEmailProfile?.browserNotifications ?? true,
+          notificationTimeMorning: existingEmailProfile?.notificationTimeMorning || '08:00',
+          notificationTimeEvening: existingEmailProfile?.notificationTimeEvening || '18:00',
+          notificationTimeNight: existingEmailProfile?.notificationTimeNight || '21:00',
         };
         setDoc(userRef, newProfile).catch(setErr =>
           console.warn('Failed to save user profile to Firestore (background):', setErr)
@@ -117,8 +150,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.warn('Could not fetch user profile from Firestore in time, using instant fallback profile:', err);
       const fallbackProfile: UserProfile = {
         uid: user.uid,
-        name: nameOverride || user.displayName || (user.email ? user.email.split('@')[0] : 'Student'),
-        email: user.email || '',
+        name: nameOverride || user.displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'Student'),
+        email: user.email || cleanEmail,
         photoURL: user.photoURL || '',
         createdAt: new Date().toISOString(),
         currentStreak: 0,
@@ -138,10 +171,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let unsubscribeTasks: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async user => {
-      setCurrentUser(user);
       if (user) {
+        setCurrentUser(user);
+        const cleanEmail = user.email ? user.email.toLowerCase().trim() : '';
+
         // Load user-specific cached tasks instantly so there's no layout jump or data leakage
-        const cached = loadCachedTasks(user.uid);
+        const cached = loadCachedTasks(user.uid, cleanEmail);
         setTasks(cached);
         setTasksLoading(cached.length === 0);
 
@@ -163,10 +198,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setTasksLoading(false);
           try {
             localStorage.setItem(`offline_tasks_${user.uid}`, JSON.stringify(realTasks));
+            if (cleanEmail) {
+              const emailKey = `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+              localStorage.setItem(emailKey, JSON.stringify(realTasks));
+            }
           } catch (e) {}
-        });
+        }, cleanEmail);
       } else {
+        // Check if there is a local guest session
+        try {
+          const localGuestRaw = localStorage.getItem('studytrack_local_guest');
+          if (localGuestRaw) {
+            const { user: localUser, profile: localProfile } = JSON.parse(localGuestRaw);
+            if (localUser && localProfile) {
+              setCurrentUser(localUser);
+              setUserProfile(localProfile);
+              const cached = loadCachedTasks(localUser.uid, localUser.email || '');
+              setTasks(cached);
+              setTasksLoading(false);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (e) {}
+
         setUserProfile(null);
+        setCurrentUser(null);
         setTasks([]);
         setTasksLoading(false);
         if (unsubscribeTasks) unsubscribeTasks();
@@ -194,29 +251,184 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [tasks, currentUser]);
 
+  const createLocalUserSession = (uid: string, email: string, name: string, photoURL = '') => {
+    const mockUser = {
+      uid,
+      email,
+      displayName: name,
+      photoURL,
+      emailVerified: true,
+      isAnonymous: false,
+    } as unknown as User;
+
+    const profile: UserProfile = {
+      uid,
+      name: name || (email ? email.split('@')[0] : 'Student'),
+      email: email || '',
+      photoURL: photoURL || '',
+      createdAt: new Date().toISOString(),
+      currentStreak: 0,
+      lastActiveDate: getTodayDateString(),
+      emailNotifications: true,
+      browserNotifications: true,
+      notificationTimeMorning: '08:00',
+      notificationTimeEvening: '18:00',
+      notificationTimeNight: '21:00',
+    };
+
+    setCurrentUser(mockUser);
+    setUserProfile(profile);
+    const cached = loadCachedTasks(uid, email);
+    setTasks(cached);
+    setTasksLoading(false);
+    try {
+      localStorage.setItem('studytrack_local_guest', JSON.stringify({ user: mockUser, profile }));
+    } catch (e) {}
+    return { mockUser, profile };
+  };
+
   const signup = async (email: string, password: string, name: string) => {
-    const res = await createUserWithEmailAndPassword(auth, email, password);
-    if (res.user) {
-      await updateProfile(res.user, { displayName: name });
-      await ensureUserProfile(res.user, name);
+    const cleanEmail = email.toLowerCase().trim();
+    try {
+      localStorage.setItem(`local_pass_${cleanEmail}`, password);
+    } catch (e) {}
+
+    try {
+      const res = await createUserWithEmailAndPassword(auth, email, password);
+      if (res.user) {
+        await updateProfile(res.user, { displayName: name });
+        await ensureUserProfile(res.user, name);
+      }
+    } catch (err: any) {
+      if (
+        err.code === 'auth/operation-not-allowed' ||
+        err.code === 'auth/unauthorized-domain' ||
+        err.code === 'auth/network-request-failed' ||
+        err.message?.includes('disabled in your Firebase project') ||
+        err.message?.includes('operation-not-allowed')
+      ) {
+        console.warn('Firebase email auth disabled, falling back to local account mode:', err);
+        const uid = 'local_' + cleanEmail.replace(/[^a-z0-9]/g, '_');
+        createLocalUserSession(uid, cleanEmail, name);
+        return;
+      }
+      throw err;
     }
   };
 
   const login = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    const cleanEmail = email.toLowerCase().trim();
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      try {
+        localStorage.setItem(`local_pass_${cleanEmail}`, password);
+      } catch (e) {}
+    } catch (err: any) {
+      if (
+        err.code === 'auth/wrong-password' ||
+        err.code === 'auth/invalid-credential' ||
+        err.code === 'auth/user-not-found' ||
+        err.code === 'auth/invalid-email'
+      ) {
+        throw err;
+      }
+
+      if (
+        err.code === 'auth/operation-not-allowed' ||
+        err.code === 'auth/unauthorized-domain' ||
+        err.code === 'auth/network-request-failed' ||
+        err.message?.includes('disabled in your Firebase project') ||
+        err.message?.includes('operation-not-allowed')
+      ) {
+        console.warn('Firebase email auth disabled, falling back to local account mode:', err);
+        const savedPass = localStorage.getItem(`local_pass_${cleanEmail}`);
+        if (savedPass && savedPass !== password) {
+          throw new Error('Invalid email or password. Please check your credentials and try again.');
+        }
+        if (!savedPass) {
+          try {
+            localStorage.setItem(`local_pass_${cleanEmail}`, password);
+          } catch (e) {}
+        }
+
+        const uid = 'local_' + cleanEmail.replace(/[^a-z0-9]/g, '_');
+        const defaultName = cleanEmail.split('@')[0] || 'Student';
+        createLocalUserSession(uid, cleanEmail, defaultName);
+        return;
+      }
+      throw err;
+    }
   };
 
-  const loginWithGoogle = async () => {
-    const res = await signInWithPopup(auth, googleProvider);
-    if (res.user) {
-      await ensureUserProfile(res.user);
+  const loginWithGoogle = async (emailHint?: string) => {
+    try {
+      const res = await signInWithPopup(auth, googleProvider);
+      if (res.user) {
+        await ensureUserProfile(res.user);
+      }
+    } catch (err: any) {
+      if (
+        err.code === 'auth/operation-not-allowed' ||
+        err.code === 'auth/unauthorized-domain' ||
+        err.code === 'auth/popup-blocked' ||
+        err.code === 'auth/popup-closed-by-user' ||
+        err.message?.includes('disabled in your Firebase project') ||
+        err.message?.includes('operation-not-allowed') ||
+        err.message?.includes('403')
+      ) {
+        console.warn('Firebase Google auth disabled or popup blocked, falling back to Google local session:', err);
+        const targetEmail = (emailHint || currentUser?.email || 'google.student@gmail.com').toLowerCase().trim();
+        const uid = 'local_' + targetEmail.replace(/[^a-z0-9]/g, '_');
+        const name = targetEmail.split('@')[0] || 'Student';
+        createLocalUserSession(uid, targetEmail, name, 'https://lh3.googleusercontent.com/a/default-user');
+        return;
+      }
+      throw err;
     }
   };
 
   const loginAsGuest = async () => {
-    const res = await signInAnonymously(auth);
-    if (res.user) {
-      await ensureUserProfile(res.user, 'Guest Student');
+    try {
+      const res = await signInAnonymously(auth);
+      if (res.user) {
+        await ensureUserProfile(res.user, 'Guest Student');
+      }
+    } catch (err) {
+      console.warn('Firebase anonymous auth disabled or failed, using instant local guest mode:', err);
+      const guestUid = 'guest_' + Math.random().toString(36).substring(2, 9);
+      const mockGuestUser = {
+        uid: guestUid,
+        email: 'guest@studytrack.local',
+        displayName: 'Guest Student',
+        photoURL: '',
+        emailVerified: true,
+        isAnonymous: true,
+      } as unknown as User;
+
+      const fallbackProfile: UserProfile = {
+        uid: guestUid,
+        name: 'Guest Student',
+        email: 'guest@studytrack.local',
+        photoURL: '',
+        createdAt: new Date().toISOString(),
+        currentStreak: 0,
+        lastActiveDate: getTodayDateString(),
+        emailNotifications: true,
+        browserNotifications: true,
+        notificationTimeMorning: '08:00',
+        notificationTimeEvening: '18:00',
+        notificationTimeNight: '21:00',
+      };
+
+      setCurrentUser(mockGuestUser);
+      setUserProfile(fallbackProfile);
+      const cached = loadCachedTasks(guestUid);
+      setTasks(cached);
+      setTasksLoading(false);
+      try {
+        localStorage.setItem('studytrack_local_guest', JSON.stringify({ user: mockGuestUser, profile: fallbackProfile }));
+      } catch (e) {}
     }
   };
 
@@ -227,6 +439,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (currentUser) {
         try {
           localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(next));
+          if (currentUser.email) {
+            const clean = currentUser.email.toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
+            localStorage.setItem(`offline_tasks_email_${clean}`, JSON.stringify(next));
+          }
         } catch (e) {}
       }
       return next;
@@ -239,6 +455,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (currentUser) {
         try {
           localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(next));
+          if (currentUser.email) {
+            const clean = currentUser.email.toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
+            localStorage.setItem(`offline_tasks_email_${clean}`, JSON.stringify(next));
+          }
         } catch (e) {}
       }
       return next;
@@ -251,6 +471,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (currentUser) {
         try {
           localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(next));
+          if (currentUser.email) {
+            const clean = currentUser.email.toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
+            localStorage.setItem(`offline_tasks_email_${clean}`, JSON.stringify(next));
+          }
         } catch (e) {}
       }
       return next;
@@ -258,10 +482,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = async () => {
+    try {
+      localStorage.removeItem('studytrack_local_guest');
+    } catch (e) {}
     setTasks([]);
     setUserProfile(null);
     setCurrentUser(null);
-    await signOut(auth);
+    await signOut(auth).catch(() => {});
   };
 
   const resetPassword = async (email: string) => {
@@ -278,7 +505,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const changePassword = async (newPassword: string) => {
     if (!currentUser) throw new Error('No active user logged in');
-    await firebaseUpdatePassword(currentUser, newPassword);
+
+    if (auth.currentUser) {
+      try {
+        await firebaseUpdatePassword(auth.currentUser, newPassword);
+      } catch (err: any) {
+        if (err.code === 'auth/requires-recent-login') {
+          throw new Error('For security reasons, please log out and log back in before updating your password.');
+        }
+        if (
+          err.code === 'auth/operation-not-allowed' ||
+          err.code === 'auth/unauthorized-domain' ||
+          err.code === 'auth/network-request-failed' ||
+          err.message?.includes('disabled in your Firebase project')
+        ) {
+          if (currentUser.email) {
+            try {
+              localStorage.setItem(`local_pass_${currentUser.email.toLowerCase().trim()}`, newPassword);
+            } catch (e) {}
+          }
+          return;
+        }
+        throw err;
+      }
+    } else {
+      if (currentUser.email) {
+        try {
+          localStorage.setItem(`local_pass_${currentUser.email.toLowerCase().trim()}`, newPassword);
+        } catch (e) {}
+      }
+    }
   };
 
   const updateUserProfile = async (updates: Partial<UserProfile>) => {

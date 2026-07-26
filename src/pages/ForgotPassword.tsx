@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { BookOpen, Mail, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react';
+import { BookOpen, Mail, ArrowLeft, CheckCircle2 } from 'lucide-react';
+import { getFriendlyAuthErrorMessage } from '../utils/authErrors';
+import { AuthErrorAlert } from '../components/AuthErrorAlert';
 
 export const ForgotPassword: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -25,7 +27,7 @@ export const ForgotPassword: React.FC = () => {
       await resetPassword(email);
       setMessage('Password reset instructions have been sent to your email.');
     } catch (err: any) {
-      setError(err.message || 'Failed to send password reset email.');
+      setError(getFriendlyAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -54,12 +56,7 @@ export const ForgotPassword: React.FC = () => {
             </div>
           )}
 
-          {error && (
-            <div className="mb-4 p-3.5 bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300 text-xs rounded-xl border border-rose-200 dark:border-rose-800 flex items-center gap-2">
-              <AlertCircle size={16} className="shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+          <AuthErrorAlert error={error} />
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

@@ -9,6 +9,7 @@ import {
   deleteDoc,
   query,
   where,
+  or,
   onSnapshot,
   orderBy,
   Timestamp,
@@ -48,12 +49,35 @@ export const cleanupDummyTasks = async (tasks: StudyTask[]): Promise<void> => {
 
 export const subscribeToUserTasks = (
   userId: string,
-  callback: (tasks: StudyTask[]) => void
+  callback: (tasks: StudyTask[]) => void,
+  userEmail?: string
 ) => {
-  const q = query(
-    collection(db, TASKS_COLLECTION),
-    where('userId', '==', userId)
-  );
+  const cleanEmail = userEmail ? userEmail.toLowerCase().trim() : '';
+  const emailKey = cleanEmail ? `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}` : '';
+
+  // Background check: find any Firestore tasks for this user's email registered under another UID and claim them for current UID
+  if (cleanEmail) {
+    getDocs(query(collection(db, TASKS_COLLECTION), where('userEmail', '==', cleanEmail)))
+      .then(snap => {
+        snap.docs.forEach(d => {
+          const data = d.data();
+          if (data && data.userId !== userId) {
+            updateDoc(doc(db, TASKS_COLLECTION, d.id), { userId }).catch(() => {});
+          }
+        });
+      })
+      .catch(() => {});
+  }
+
+  const q = cleanEmail
+    ? query(
+        collection(db, TASKS_COLLECTION),
+        or(where('userId', '==', userId), where('userEmail', '==', cleanEmail))
+      )
+    : query(
+        collection(db, TASKS_COLLECTION),
+        where('userId', '==', userId)
+      );
 
   return onSnapshot(
     q,
@@ -62,7 +86,8 @@ export const subscribeToUserTasks = (
         const data = docSnap.data();
         return {
           id: docSnap.id,
-          userId: data.userId,
+          userId: data.userId || userId,
+          userEmail: data.userEmail || cleanEmail,
           title: data.title,
           subject: data.subject || 'General',
           estimatedTime: data.estimatedTime || 30,
@@ -75,39 +100,39 @@ export const subscribeToUserTasks = (
         } as StudyTask;
       });
 
-      // Sort in memory by date desc, then status (Pending first, Completed last)
-      tasks.sort((a, b) => {
-        if (a.date !== b.date) {
-          return b.date.localeCompare(a.date);
-        }
-        if (a.status === 'Completed' && b.status !== 'Completed') return 1;
-        if (a.status !== 'Completed' && b.status === 'Completed') return -1;
-        return a.title.localeCompare(b.title);
+      // Merge with offline tasks stored in localStorage for this userId AND email ONLY
+      let offlineTasks: StudyTask[] = [];
+      const readKeys = [`offline_tasks_${userId}`];
+      if (emailKey) readKeys.push(emailKey);
+
+      readKeys.forEach(k => {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(t => {
+                if (t && t.id) {
+                  const matchesUser = t.userId === userId;
+                  const matchesEmail = cleanEmail && t.userEmail && t.userEmail.toLowerCase().trim() === cleanEmail;
+                  if (matchesUser || matchesEmail) {
+                    offlineTasks.push({ ...t, userId, userEmail: cleanEmail || t.userEmail });
+                  }
+                }
+              });
+            }
+          }
+        } catch (e) {}
       });
 
-      // Merge with offline tasks stored in localStorage for this specific userId
-      let offlineTasks: StudyTask[] = [];
-      try {
-        const userSpecificKey = `offline_tasks_${userId}`;
-        const raw = localStorage.getItem(userSpecificKey) || localStorage.getItem('offline_tasks');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            offlineTasks = parsed.filter(t => t && (t.userId === userId || !t.userId));
-          }
-        }
-      } catch (e) {
-        offlineTasks = [];
-      }
-
       const allTasksMap = new Map<string, StudyTask>();
-      // Put offline tasks for this user first
+      // Put offline tasks first
       offlineTasks.forEach(t => {
         if (t && t.id) {
           allTasksMap.set(t.id, { ...t, userId });
         }
       });
-      // Overwrite/merge with Firestore snapshot tasks (strictly for this userId)
+      // Overwrite/merge with Firestore snapshot tasks
       tasks.forEach(t => {
         if (t && t.id) {
           allTasksMap.set(t.id, t);
@@ -126,23 +151,44 @@ export const subscribeToUserTasks = (
         return a.title.localeCompare(b.title);
       });
 
+      // Save back to local storage
+      try {
+        localStorage.setItem(`offline_tasks_${userId}`, JSON.stringify(allTasks));
+        if (emailKey) {
+          localStorage.setItem(emailKey, JSON.stringify(allTasks));
+        }
+      } catch (e) {}
+
       callback(allTasks);
     },
     error => {
       console.warn('Realtime task listener notice:', error.message);
       let offlineTasks: StudyTask[] = [];
-      try {
-        const userSpecificKey = `offline_tasks_${userId}`;
-        const raw = localStorage.getItem(userSpecificKey) || localStorage.getItem('offline_tasks');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            offlineTasks = parsed.filter(t => t && (t.userId === userId || !t.userId)).map(t => ({ ...t, userId }));
+      const readKeys = [`offline_tasks_${userId}`];
+      if (emailKey) readKeys.push(emailKey);
+
+      const offlineMap = new Map<string, StudyTask>();
+      readKeys.forEach(k => {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(t => {
+                if (t && t.id) {
+                  const matchesUser = t.userId === userId;
+                  const matchesEmail = cleanEmail && t.userEmail && t.userEmail.toLowerCase().trim() === cleanEmail;
+                  if (matchesUser || matchesEmail) {
+                    offlineMap.set(t.id, { ...t, userId, userEmail: cleanEmail || t.userEmail });
+                  }
+                }
+              });
+            }
           }
-        }
-      } catch (e) {
-        offlineTasks = [];
-      }
+        } catch (e) {}
+      });
+
+      offlineTasks = Array.from(offlineMap.values());
       callback(offlineTasks);
     }
   );
@@ -150,12 +196,15 @@ export const subscribeToUserTasks = (
 
 export const createStudyTask = async (
   userId: string,
-  taskData: Omit<StudyTask, 'id' | 'userId' | 'createdAt'>
+  taskData: Omit<StudyTask, 'id' | 'userId' | 'createdAt'>,
+  userEmail?: string
 ): Promise<StudyTask> => {
   const taskId = doc(collection(db, TASKS_COLLECTION)).id;
+  const cleanEmail = userEmail ? userEmail.toLowerCase().trim() : '';
   const newTask: StudyTask = {
     id: taskId,
     userId,
+    userEmail: cleanEmail,
     title: taskData.title,
     subject: taskData.subject || 'General',
     estimatedTime: Number(taskData.estimatedTime) || 30,
@@ -166,16 +215,25 @@ export const createStudyTask = async (
     createdAt: new Date().toISOString(),
   };
 
-  // Always save to localStorage backup
+  // Always save to user-specific localStorage backups
   try {
-    const offline: StudyTask[] = JSON.parse(localStorage.getItem('offline_tasks') || '[]');
-    const existingIndex = offline.findIndex(t => t.id === taskId);
-    if (existingIndex !== -1) {
-      offline[existingIndex] = newTask;
-    } else {
-      offline.unshift(newTask);
+    const offlineKeys = [`offline_tasks_${userId}`];
+    if (cleanEmail) {
+      offlineKeys.push(`offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`);
     }
-    localStorage.setItem('offline_tasks', JSON.stringify(offline));
+
+    offlineKeys.forEach(k => {
+      try {
+        const offline: StudyTask[] = JSON.parse(localStorage.getItem(k) || '[]');
+        const existingIndex = offline.findIndex(t => t.id === taskId);
+        if (existingIndex !== -1) {
+          offline[existingIndex] = newTask;
+        } else {
+          offline.unshift(newTask);
+        }
+        localStorage.setItem(k, JSON.stringify(offline));
+      } catch (e) {}
+    });
   } catch (e) {
     console.warn('Failed to cache task locally:', e);
   }
@@ -194,11 +252,18 @@ export const updateStudyTask = async (
   updates: Partial<StudyTask>
 ): Promise<void> => {
   try {
-    const offline: StudyTask[] = JSON.parse(localStorage.getItem('offline_tasks') || '[]');
-    const index = offline.findIndex(t => t.id === taskId);
-    if (index !== -1) {
-      offline[index] = { ...offline[index], ...updates };
-      localStorage.setItem('offline_tasks', JSON.stringify(offline));
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('offline_tasks_')) {
+        try {
+          const offline: StudyTask[] = JSON.parse(localStorage.getItem(key) || '[]');
+          const index = offline.findIndex(t => t.id === taskId);
+          if (index !== -1) {
+            offline[index] = { ...offline[index], ...updates };
+            localStorage.setItem(key, JSON.stringify(offline));
+          }
+        } catch (e) {}
+      }
     }
   } catch (e) {}
 
@@ -210,9 +275,16 @@ export const updateStudyTask = async (
 
 export const deleteStudyTask = async (taskId: string): Promise<void> => {
   try {
-    const offline: StudyTask[] = JSON.parse(localStorage.getItem('offline_tasks') || '[]');
-    const filtered = offline.filter(t => t.id !== taskId);
-    localStorage.setItem('offline_tasks', JSON.stringify(filtered));
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('offline_tasks_')) {
+        try {
+          const offline: StudyTask[] = JSON.parse(localStorage.getItem(key) || '[]');
+          const filtered = offline.filter(t => t.id !== taskId);
+          localStorage.setItem(key, JSON.stringify(filtered));
+        } catch (e) {}
+      }
+    }
   } catch (e) {}
 
   const taskRef = doc(db, TASKS_COLLECTION, taskId);
