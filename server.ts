@@ -1,7 +1,29 @@
 import express from 'express';
 import path from 'path';
 import nodemailer from 'nodemailer';
+import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
+
+dotenv.config();
+
+function getDetailedSmtpErrorMessage(error: any): string {
+  const msg = String(error?.message || error || '');
+  if (
+    msg.includes('535') ||
+    msg.toLowerCase().includes('invalid login') ||
+    msg.toLowerCase().includes('authentication failed') ||
+    msg.toLowerCase().includes('username and password not accepted')
+  ) {
+    return `SMTP Authentication Failed: Invalid credentials. Important for Gmail users: Gmail requires a 16-character App Password (generated under Google Account > Security > 2-Step Verification > App passwords) rather than your standard account password.`;
+  }
+  if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
+    return `SMTP Host Error: Server hostname could not be resolved. Please verify SMTP_HOST in secrets (e.g. smtp.gmail.com).`;
+  }
+  if (msg.includes('ETIMEDOUT') || msg.includes('ECONNREFUSED') || msg.includes('connect')) {
+    return `SMTP Connection Timeout: Unable to connect to host/port. Please verify SMTP_PORT (587 or 465) and network access.`;
+  }
+  return `SMTP Error: ${msg}. Please check your SMTP settings in environment secrets.`;
+}
 
 async function startServer() {
   const app = express();
@@ -16,34 +38,63 @@ async function startServer() {
 
   // Check Email Server Configuration Status
   app.get('/api/email-status', (req, res) => {
-    const isSmtpConfigured = Boolean(
-      process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS
-    );
+    let host = (process.env.SMTP_HOST || '').trim();
+    const user = (process.env.SMTP_USER || '').trim();
+    const pass = (process.env.SMTP_PASS || '').trim();
+
+    if (host.includes('stmp.')) {
+      host = host.replace('stmp.', 'smtp.');
+    }
+
+    const isSmtpConfigured = Boolean(host && user && pass);
 
     res.json({
       configured: isSmtpConfigured,
-      host: process.env.SMTP_HOST || 'Not configured (Using Ethereal Sandbox)',
+      host: host || 'Not configured (Using Ethereal Sandbox)',
       mode: isSmtpConfigured ? 'smtp' : 'ethereal',
     });
   });
 
   // Helper to create appropriate transporter
   const getEmailTransporter = async () => {
-    const isSmtpConfigured = Boolean(
-      process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS
-    );
+    let host = (process.env.SMTP_HOST || '').trim();
+    const user = (process.env.SMTP_USER || '').trim();
+    const pass = (process.env.SMTP_PASS || '').trim();
+
+    // Auto-correct common typo stmp -> smtp
+    if (host.includes('stmp.')) {
+      host = host.replace('stmp.', 'smtp.');
+    }
+
+    const isSmtpConfigured = Boolean(host && user && pass);
 
     if (isSmtpConfigured) {
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === 'true',
+      const port = Number(process.env.SMTP_PORT) || 587;
+      const secure = process.env.SMTP_SECURE !== undefined
+        ? process.env.SMTP_SECURE === 'true'
+        : port === 465;
+
+      const transporterOptions: any = {
+        host,
+        port,
+        secure,
         auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
+          user,
+          pass,
         },
-      });
-      return { transporter, isCustomSmtp: true, fromAddress: process.env.SMTP_FROM || `StudyTrack <${process.env.SMTP_USER}>` };
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
+      };
+
+      if (host.includes('gmail.com') || host.includes('googlemail.com')) {
+        transporterOptions.service = 'gmail';
+      }
+
+      const transporter = nodemailer.createTransport(transporterOptions);
+      const fromAddress = process.env.SMTP_FROM || `StudyTrack <${user}>`;
+
+      return { transporter, isCustomSmtp: true, fromAddress };
     }
 
     // Try Ethereal Test Account
@@ -150,7 +201,7 @@ async function startServer() {
           html: htmlContent,
         });
 
-        const previewUrl = nodemailer.getTestMessageUrl(info);
+        const previewUrl = nodemailer.getTestMessageUrl(info as any);
 
         if (isCustomSmtp) {
           return res.json({
@@ -178,11 +229,12 @@ async function startServer() {
       }
     } catch (error: any) {
       console.error('Email sending error:', error?.message || error);
+      const detailMsg = getDetailedSmtpErrorMessage(error);
       return res.json({
         success: false,
         smtpConfigured: false,
         mode: 'error',
-        message: `Failed to deliver email: ${error?.message || 'SMTP connection error'}. Please verify SMTP credentials in settings or environment.`,
+        message: detailMsg,
       });
     }
   });
@@ -355,7 +407,7 @@ async function startServer() {
           html: htmlContent,
         });
 
-        const previewUrl = nodemailer.getTestMessageUrl(info);
+        const previewUrl = nodemailer.getTestMessageUrl(info as any);
 
         return res.json({
           success: true,
@@ -376,9 +428,10 @@ async function startServer() {
       }
     } catch (error: any) {
       console.error('Email dispatch error:', error?.message || error);
+      const detailMsg = getDetailedSmtpErrorMessage(error);
       return res.json({
         success: false,
-        message: `Could not send email: ${error?.message || 'Transport error'}. Please verify SMTP credentials.`,
+        message: detailMsg,
       });
     }
   });

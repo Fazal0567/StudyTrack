@@ -110,6 +110,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           notificationTimeMorning: data.notificationTimeMorning || '08:00',
           notificationTimeEvening: data.notificationTimeEvening || '18:00',
           notificationTimeNight: data.notificationTimeNight || '21:00',
+          emailReportEnabled: data.emailReportEnabled ?? true,
+          emailReportTime: data.emailReportTime || '09:00',
+          emailReportType: data.emailReportType || 'progress_report',
+          emailReportFilter: data.emailReportFilter || 'all',
+          emailReportDateRange: data.emailReportDateRange || 'today',
+          emailReportCustomDate: data.emailReportCustomDate || getTodayDateString(),
+          lastEmailReportSentDate: data.lastEmailReportSentDate || '',
         };
         setUserProfile(profile);
         return profile;
@@ -139,6 +146,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           notificationTimeMorning: existingEmailProfile?.notificationTimeMorning || '08:00',
           notificationTimeEvening: existingEmailProfile?.notificationTimeEvening || '18:00',
           notificationTimeNight: existingEmailProfile?.notificationTimeNight || '21:00',
+          emailReportEnabled: existingEmailProfile?.emailReportEnabled ?? true,
+          emailReportTime: existingEmailProfile?.emailReportTime || '09:00',
+          emailReportType: existingEmailProfile?.emailReportType || 'progress_report',
+          emailReportFilter: existingEmailProfile?.emailReportFilter || 'all',
+          emailReportDateRange: existingEmailProfile?.emailReportDateRange || 'today',
+          emailReportCustomDate: existingEmailProfile?.emailReportCustomDate || getTodayDateString(),
+          lastEmailReportSentDate: existingEmailProfile?.lastEmailReportSentDate || '',
         };
         setDoc(userRef, newProfile).catch(setErr =>
           console.warn('Failed to save user profile to Firestore (background):', setErr)
@@ -239,6 +253,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             notificationTimeMorning: data.notificationTimeMorning || '08:00',
             notificationTimeEvening: data.notificationTimeEvening || '18:00',
             notificationTimeNight: data.notificationTimeNight || '21:00',
+            emailReportEnabled: data.emailReportEnabled ?? true,
+            emailReportTime: data.emailReportTime || '09:00',
+            emailReportType: data.emailReportType || 'progress_report',
+            emailReportFilter: data.emailReportFilter || 'all',
+            emailReportDateRange: data.emailReportDateRange || 'today',
+            emailReportCustomDate: data.emailReportCustomDate || getTodayDateString(),
+            lastEmailReportSentDate: data.lastEmailReportSentDate || '',
           });
         }
       },
@@ -580,19 +601,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateUserProfile = async (updates: Partial<UserProfile>) => {
     if (!currentUser) return;
-    setUserProfile(prev => (prev ? { ...prev, ...updates } : null));
+
+    setUserProfile(prev => {
+      const base: UserProfile = prev || {
+        uid: currentUser.uid,
+        email: currentUser.email || 'user@example.com',
+        name: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
+        emailNotifications: true,
+        browserNotifications: false,
+        notificationTimeMorning: '08:00',
+        notificationTimeEvening: '18:00',
+        notificationTimeNight: '21:00',
+        emailReportEnabled: true,
+        emailReportTime: '09:00',
+        emailReportType: 'progress_report',
+        emailReportFilter: 'all',
+        emailReportDateRange: 'today',
+        emailReportCustomDate: getTodayDateString(),
+        lastEmailReportSentDate: '',
+      };
+      const updated = { ...base, ...updates };
+      try {
+        if (currentUser.uid === 'guest-user') {
+          localStorage.setItem('studytrack_local_guest', JSON.stringify({ user: currentUser, profile: updated }));
+        } else {
+          localStorage.setItem(`user_profile_${currentUser.uid}`, JSON.stringify(updated));
+        }
+      } catch (e) {}
+      return updated;
+    });
 
     try {
       const userRef = doc(db, 'users', currentUser.uid);
-      await updateDoc(userRef, updates);
+      await setDoc(userRef, updates, { merge: true });
     } catch (err) {
       console.warn('Failed to update user profile in Firestore (offline mode):', err);
-      try {
-        const userRef = doc(db, 'users', currentUser.uid);
-        await setDoc(userRef, updates, { merge: true });
-      } catch (mergeErr) {
-        console.warn('Fallback setDoc also failed (offline mode):', mergeErr);
-      }
     }
 
     if (updates.name && auth.currentUser) {

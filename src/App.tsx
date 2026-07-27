@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useOutletContext } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -9,6 +9,7 @@ import { TaskModal } from './components/TaskModal';
 import { StudyTimerModal } from './components/StudyTimerModal';
 import { StudyTask } from './types';
 import { createStudyTask, updateStudyTask, getTodayDateString } from './services/taskService';
+import { sendEmailReminder } from './services/emailService';
 
 // Pages
 import { Login } from './pages/Login';
@@ -31,7 +32,7 @@ interface OutletContextType {
 const useOutletContextTyped = () => useOutletContext<OutletContextType>();
 
 const AppLayout: React.FC = () => {
-  const { currentUser, userProfile, tasks, addTaskToState, updateTaskInState } = useAuth();
+  const { currentUser, userProfile, tasks, addTaskToState, updateTaskInState, updateUserProfile } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [taskModalOpen, setTaskModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<StudyTask | null>(null);
@@ -40,10 +41,106 @@ const AppLayout: React.FC = () => {
   // Timer modal state
   const [focusTask, setFocusTask] = useState<StudyTask | null>(null);
   const [timerModalOpen, setTimerModalOpen] = useState(false);
+  const sendingReportForDateRef = useRef<string | null>(null);
 
   const todayStr = getTodayDateString();
   const pendingCount = tasks.filter(t => t.date === todayStr && t.status === 'Pending').length;
   const missedCount = tasks.filter(t => t.status === 'Missed').length;
+
+  // Background timer for user-scheduled custom email report
+  useEffect(() => {
+    if (
+      !userProfile?.email ||
+      userProfile?.emailNotifications === false ||
+      userProfile?.emailReportEnabled === false
+    ) {
+      return;
+    }
+
+    const checkAndSendScheduledEmail = async () => {
+      const currentDayStr = getTodayDateString();
+      const now = new Date();
+      const currentHours = String(now.getHours()).padStart(2, '0');
+      const currentMinutes = String(now.getMinutes()).padStart(2, '0');
+      const currentTimeStr = `${currentHours}:${currentMinutes}`;
+      const scheduledTime = userProfile.emailReportTime || '09:00';
+
+      const timeSlotKey = `${currentDayStr}_${currentTimeStr}`;
+
+      if (currentTimeStr === scheduledTime) {
+        if (sendingReportForDateRef.current === timeSlotKey) {
+          return;
+        }
+        sendingReportForDateRef.current = timeSlotKey;
+        await updateUserProfile({ lastEmailReportSentDate: currentDayStr });
+
+        try {
+          const reportType = userProfile.emailReportType || 'progress_report';
+          const reportFilter = userProfile.emailReportFilter || 'all';
+          const dateRange = userProfile.emailReportDateRange || 'today';
+
+          let targetDateStr = currentDayStr;
+          let targetDateLabel = `Today (${currentDayStr})`;
+
+          if (dateRange === 'yesterday') {
+            const y = new Date();
+            y.setDate(y.getDate() - 1);
+            targetDateStr = y.toISOString().split('T')[0];
+            targetDateLabel = `Yesterday (${targetDateStr})`;
+          } else if (dateRange === 'specific') {
+            targetDateStr = userProfile.emailReportCustomDate || currentDayStr;
+            targetDateLabel = `Specific Date (${targetDateStr})`;
+          } else if (dateRange === 'all') {
+            targetDateStr = 'all';
+            targetDateLabel = 'All Dates (All-Time)';
+          }
+
+          let filteredTasks = dateRange === 'all' ? [...tasks] : tasks.filter(t => t.date === targetDateStr);
+          if (reportFilter === 'completed') {
+            filteredTasks = filteredTasks.filter(t => t.status === 'Completed');
+          } else if (reportFilter === 'pending') {
+            filteredTasks = filteredTasks.filter(t => t.status === 'Pending');
+          }
+
+          const baseTargetTasks = dateRange === 'all' ? tasks : tasks.filter(t => t.date === targetDateStr);
+          const completedCount = baseTargetTasks.filter(t => t.status === 'Completed').length;
+          const totalCount = baseTargetTasks.length;
+          const pendingCount = baseTargetTasks.filter(t => t.status === 'Pending').length;
+          const totalStudyMinutes = baseTargetTasks
+            .filter(t => t.status === 'Completed')
+            .reduce((acc, t) => acc + (t.estimatedTime || 0), 0);
+          const completionRate = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+          await sendEmailReminder({
+            toEmail: userProfile.email,
+            userName: userProfile.name,
+            reminderType: reportType,
+            taskFilter: reportFilter,
+            targetDate: targetDateStr,
+            targetDateLabel,
+            tasks: filteredTasks,
+            stats: {
+              totalTasks: totalCount,
+              completedCount,
+              pendingCount,
+              totalStudyMinutes,
+              currentStreak: userProfile.currentStreak || 0,
+              completionRate,
+            },
+            emailNotificationsEnabled: true,
+          });
+        } catch (err) {
+          console.error('Automated email report dispatch error:', err);
+        }
+      }
+    };
+
+    // Run check immediately on mount/profile change
+    checkAndSendScheduledEmail();
+
+    const interval = setInterval(checkAndSendScheduledEmail, 20000);
+    return () => clearInterval(interval);
+  }, [userProfile, tasks, updateUserProfile]);
 
   const handleOpenAddModal = (dateStr?: string) => {
     const validDateStr = typeof dateStr === 'string' ? dateStr : undefined;
@@ -72,8 +169,13 @@ const AppLayout: React.FC = () => {
     const userEmail = currentUser?.email || userProfile?.email || undefined;
 
     if (editingTask) {
-      await updateStudyTask(editingTask.id, taskData);
-      updateTaskInState(editingTask.id, taskData);
+      const updates = {
+        ...taskData,
+        userId: editingTask.userId || userId,
+        userEmail: editingTask.userEmail || (userEmail ? userEmail.toLowerCase().trim() : undefined),
+      };
+      await updateStudyTask(editingTask.id, updates);
+      updateTaskInState(editingTask.id, updates);
     } else {
       const created = await createStudyTask(userId, taskData, userEmail);
       addTaskToState(created);

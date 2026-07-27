@@ -29,6 +29,13 @@ export interface UserProfile {
   notificationTimeMorning?: string;
   notificationTimeEvening?: string;
   notificationTimeNight?: string;
+  emailReportEnabled?: boolean;
+  emailReportTime?: string; // e.g. "09:00" or "20:00"
+  emailReportType?: 'progress_report' | 'morning' | 'evening' | 'night';
+  emailReportFilter?: 'all' | 'completed' | 'pending';
+  emailReportDateRange?: 'today' | 'yesterday' | 'specific' | 'all';
+  emailReportCustomDate?: string; // "YYYY-MM-DD"
+  lastEmailReportSentDate?: string; // "YYYY-MM-DD"
 }
 
 export interface TaskStats {

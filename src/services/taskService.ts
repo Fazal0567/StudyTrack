@@ -7,6 +7,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   query,
   where,
   or,
@@ -23,6 +24,76 @@ const USERS_COLLECTION = 'users';
 
 export const getTodayDateString = (): string => {
   return format(new Date(), 'yyyy-MM-dd');
+};
+
+export const syncUserTasksAcrossDevices = async (
+  userId: string,
+  userEmail: string
+): Promise<void> => {
+  const cleanEmail = userEmail ? userEmail.toLowerCase().trim() : '';
+  if (!cleanEmail) return;
+
+  try {
+    // 1. Claim or update userId on tasks in Firestore matching userEmail
+    const emailQuery = query(collection(db, TASKS_COLLECTION), where('userEmail', '==', cleanEmail));
+    const emailSnap = await getDocs(emailQuery);
+    emailSnap.docs.forEach(d => {
+      const data = d.data();
+      if (data && data.userId !== userId) {
+        updateDoc(doc(db, TASKS_COLLECTION, d.id), { userId }).catch(() => {});
+      }
+    });
+
+    // 2. Attach userEmail on tasks matching userId where userEmail was missing or empty
+    const userQuery = query(collection(db, TASKS_COLLECTION), where('userId', '==', userId));
+    const userSnap = await getDocs(userQuery);
+    userSnap.docs.forEach(d => {
+      const data = d.data();
+      if (data && (!data.userEmail || data.userEmail.toLowerCase().trim() !== cleanEmail)) {
+        updateDoc(doc(db, TASKS_COLLECTION, d.id), { userEmail: cleanEmail }).catch(() => {});
+      }
+    });
+
+    // 3. Upload offline/guest tasks to Firestore if not yet present
+    const emailKey = `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+    const readKeys = [`offline_tasks_${userId}`, emailKey, 'offline_tasks_guest_user'];
+    const localTasksMap = new Map<string, StudyTask>();
+
+    readKeys.forEach(k => {
+      try {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            parsed.forEach((t: any) => {
+              if (t && t.id && t.title) {
+                localTasksMap.set(t.id, {
+                  ...t,
+                  userId,
+                  userEmail: cleanEmail,
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {}
+    });
+
+    for (const [taskId, localTask] of localTasksMap.entries()) {
+      const taskRef = doc(db, TASKS_COLLECTION, taskId);
+      const docSnap = await getDoc(taskRef).catch(() => null);
+      if (!docSnap || !docSnap.exists()) {
+        const cleanPayload: Record<string, any> = {};
+        Object.keys(localTask).forEach(k => {
+          const val = (localTask as any)[k];
+          if (val !== undefined) cleanPayload[k] = val;
+        });
+        setDoc(taskRef, cleanPayload).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn('syncUserTasksAcrossDevices notice:', err);
+  }
 };
 
 export const seedInitialTasksIfEmpty = async (_userId: string): Promise<void> => {
@@ -55,18 +126,9 @@ export const subscribeToUserTasks = (
   const cleanEmail = userEmail ? userEmail.toLowerCase().trim() : '';
   const emailKey = cleanEmail ? `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}` : '';
 
-  // Background check: claim any tasks for current email under another UID
+  // Background check & auto-sync across devices for this user/email
   if (cleanEmail) {
-    getDocs(query(collection(db, TASKS_COLLECTION), where('userEmail', '==', cleanEmail)))
-      .then(snap => {
-        snap.docs.forEach(d => {
-          const data = d.data();
-          if (data && data.userId !== userId) {
-            updateDoc(doc(db, TASKS_COLLECTION, d.id), { userId }).catch(() => {});
-          }
-        });
-      })
-      .catch(() => {});
+    syncUserTasksAcrossDevices(userId, cleanEmail).catch(() => {});
   }
 
   const userDocsMap = new Map<string, StudyTask>();
@@ -306,9 +368,17 @@ export const createStudyTask = async (
     console.warn('Failed to cache task locally:', e);
   }
 
-  // Persist to Firestore asynchronously
+  // Persist to Firestore asynchronously without undefined properties
   const docRef = doc(db, TASKS_COLLECTION, taskId);
-  setDoc(docRef, newTask).catch(err => {
+  const firestorePayload: Record<string, any> = {};
+  Object.keys(newTask).forEach(k => {
+    const val = (newTask as any)[k];
+    if (val !== undefined) {
+      firestorePayload[k] = val;
+    }
+  });
+
+  setDoc(docRef, firestorePayload).catch(err => {
     console.warn('Firestore setDoc background save notice:', err);
   });
 
@@ -327,7 +397,16 @@ export const updateStudyTask = async (
           const offline: StudyTask[] = JSON.parse(localStorage.getItem(key) || '[]');
           const index = offline.findIndex(t => t.id === taskId);
           if (index !== -1) {
-            offline[index] = { ...offline[index], ...updates };
+            const updatedTask = { ...offline[index] };
+            Object.keys(updates).forEach(k => {
+              const val = (updates as any)[k];
+              if (val === undefined) {
+                delete (updatedTask as any)[k];
+              } else {
+                (updatedTask as any)[k] = val;
+              }
+            });
+            offline[index] = updatedTask;
             localStorage.setItem(key, JSON.stringify(offline));
           }
         } catch (e) {}
@@ -335,10 +414,21 @@ export const updateStudyTask = async (
     }
   } catch (e) {}
 
+  // Convert undefined fields to deleteField() for Firestore compatibility
+  const firestoreUpdates: Record<string, any> = {};
+  Object.keys(updates).forEach(key => {
+    const val = (updates as any)[key];
+    if (val === undefined) {
+      firestoreUpdates[key] = deleteField();
+    } else {
+      firestoreUpdates[key] = val;
+    }
+  });
+
   const taskRef = doc(db, TASKS_COLLECTION, taskId);
-  updateDoc(taskRef, updates).catch(err => {
+  updateDoc(taskRef, firestoreUpdates).catch(err => {
     console.warn('Firestore updateDoc background notice, attempting setDoc merge:', err);
-    setDoc(taskRef, updates, { merge: true }).catch(() => {});
+    setDoc(taskRef, firestoreUpdates, { merge: true }).catch(() => {});
   });
 };
 
