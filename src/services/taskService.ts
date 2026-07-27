@@ -51,11 +51,11 @@ export const subscribeToUserTasks = (
   userId: string,
   callback: (tasks: StudyTask[]) => void,
   userEmail?: string
-) => {
+): (() => void) => {
   const cleanEmail = userEmail ? userEmail.toLowerCase().trim() : '';
   const emailKey = cleanEmail ? `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}` : '';
 
-  // Background check: find any Firestore tasks for this user's email registered under another UID and claim them for current UID
+  // Background check: claim any tasks for current email under another UID
   if (cleanEmail) {
     getDocs(query(collection(db, TASKS_COLLECTION), where('userEmail', '==', cleanEmail)))
       .then(snap => {
@@ -69,22 +69,128 @@ export const subscribeToUserTasks = (
       .catch(() => {});
   }
 
-  const q = cleanEmail
-    ? query(
-        collection(db, TASKS_COLLECTION),
-        or(where('userId', '==', userId), where('userEmail', '==', cleanEmail))
-      )
-    : query(
-        collection(db, TASKS_COLLECTION),
-        where('userId', '==', userId)
-      );
+  const userDocsMap = new Map<string, StudyTask>();
+  const emailDocsMap = new Map<string, StudyTask>();
+  let hasUserSnapshot = false;
+  let hasEmailSnapshot = false;
 
-  return onSnapshot(
-    q,
+  const getDeletedTaskIds = (): Set<string> => {
+    try {
+      const raw = localStorage.getItem('deleted_task_ids');
+      if (raw) {
+        return new Set(JSON.parse(raw));
+      }
+    } catch (e) {}
+    return new Set();
+  };
+
+  const emitMergedTasks = () => {
+    const deletedIds = getDeletedTaskIds();
+    const combinedMap = new Map<string, StudyTask>();
+    const hasAnyLiveSnapshot = hasUserSnapshot || (cleanEmail ? hasEmailSnapshot : false);
+
+    // 1. If we DON'T have a live Firestore snapshot yet, load from offline cache as fallback
+    if (!hasAnyLiveSnapshot) {
+      const readKeys = [`offline_tasks_${userId}`];
+      if (emailKey) readKeys.push(emailKey);
+      readKeys.forEach(k => {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(t => {
+                if (t && t.id && !deletedIds.has(t.id)) {
+                  const matchesUser = t.userId === userId;
+                  const matchesEmail = cleanEmail && t.userEmail && t.userEmail.toLowerCase().trim() === cleanEmail;
+                  if (matchesUser || matchesEmail) {
+                    combinedMap.set(t.id, { ...t, userId, userEmail: cleanEmail || t.userEmail });
+                  }
+                }
+              });
+            }
+          }
+        } catch (e) {}
+      });
+    }
+
+    // 2. Add Firestore tasks from email query snapshot (excluding deleted ones)
+    emailDocsMap.forEach((t, id) => {
+      if (!deletedIds.has(id)) {
+        combinedMap.set(id, t);
+      }
+    });
+
+    // 3. Add/overwrite Firestore tasks from userId query snapshot (excluding deleted ones)
+    userDocsMap.forEach((t, id) => {
+      if (!deletedIds.has(id)) {
+        const existing = combinedMap.get(id);
+        if (existing) {
+          combinedMap.set(id, { ...existing, ...t, userId, userEmail: cleanEmail || t.userEmail || existing.userEmail });
+        } else {
+          combinedMap.set(id, t);
+        }
+      }
+    });
+
+    // 4. Preserve offline tasks created very recently (< 60s ago) that haven't appeared in snapshot yet
+    if (hasAnyLiveSnapshot) {
+      const readKeys = [`offline_tasks_${userId}`];
+      if (emailKey) readKeys.push(emailKey);
+      readKeys.forEach(k => {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(t => {
+                if (t && t.id && !deletedIds.has(t.id) && !combinedMap.has(t.id)) {
+                  const createdTime = t.createdAt ? new Date(t.createdAt).getTime() : 0;
+                  if (Date.now() - createdTime < 60000) {
+                    combinedMap.set(t.id, t);
+                  }
+                }
+              });
+            }
+          }
+        } catch (e) {}
+      });
+    }
+
+    const allTasks = Array.from(combinedMap.values());
+
+    // Sort in memory by date desc, then status (Pending first, Completed last)
+    allTasks.sort((a, b) => {
+      if (a.date !== b.date) {
+        return b.date.localeCompare(a.date);
+      }
+      if (a.status === 'Completed' && b.status !== 'Completed') return 1;
+      if (a.status !== 'Completed' && b.status === 'Completed') return -1;
+      return a.title.localeCompare(b.title);
+    });
+
+    // Save back to local storage caches
+    try {
+      localStorage.setItem(`offline_tasks_${userId}`, JSON.stringify(allTasks));
+      if (emailKey) {
+        localStorage.setItem(emailKey, JSON.stringify(allTasks));
+      }
+    } catch (e) {}
+
+    callback(allTasks);
+  };
+
+  // Immediate initial emit from offline cache
+  emitMergedTasks();
+
+  const unsubUser = onSnapshot(
+    query(collection(db, TASKS_COLLECTION), where('userId', '==', userId)),
     snapshot => {
-      const tasks: StudyTask[] = snapshot.docs.map(docSnap => {
+      hasUserSnapshot = true;
+      userDocsMap.clear();
+      snapshot.docs.forEach(docSnap => {
         const data = docSnap.data();
-        return {
+        userDocsMap.set(docSnap.id, {
           id: docSnap.id,
           userId: data.userId || userId,
           userEmail: data.userEmail || cleanEmail,
@@ -97,101 +203,53 @@ export const subscribeToUserTasks = (
           createdAt: data.createdAt || new Date().toISOString(),
           date: data.date || getTodayDateString(),
           completedAt: data.completedAt,
-        } as StudyTask;
+        } as StudyTask);
       });
-
-      // Merge with offline tasks stored in localStorage for this userId AND email ONLY
-      let offlineTasks: StudyTask[] = [];
-      const readKeys = [`offline_tasks_${userId}`];
-      if (emailKey) readKeys.push(emailKey);
-
-      readKeys.forEach(k => {
-        try {
-          const raw = localStorage.getItem(k);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-              parsed.forEach(t => {
-                if (t && t.id) {
-                  const matchesUser = t.userId === userId;
-                  const matchesEmail = cleanEmail && t.userEmail && t.userEmail.toLowerCase().trim() === cleanEmail;
-                  if (matchesUser || matchesEmail) {
-                    offlineTasks.push({ ...t, userId, userEmail: cleanEmail || t.userEmail });
-                  }
-                }
-              });
-            }
-          }
-        } catch (e) {}
-      });
-
-      const allTasksMap = new Map<string, StudyTask>();
-      // Put offline tasks first
-      offlineTasks.forEach(t => {
-        if (t && t.id) {
-          allTasksMap.set(t.id, { ...t, userId });
-        }
-      });
-      // Overwrite/merge with Firestore snapshot tasks
-      tasks.forEach(t => {
-        if (t && t.id) {
-          allTasksMap.set(t.id, t);
-        }
-      });
-
-      const allTasks = Array.from(allTasksMap.values());
-
-      // Sort in memory by date desc, then status (Pending first, Completed last)
-      allTasks.sort((a, b) => {
-        if (a.date !== b.date) {
-          return b.date.localeCompare(a.date);
-        }
-        if (a.status === 'Completed' && b.status !== 'Completed') return 1;
-        if (a.status !== 'Completed' && b.status === 'Completed') return -1;
-        return a.title.localeCompare(b.title);
-      });
-
-      // Save back to local storage
-      try {
-        localStorage.setItem(`offline_tasks_${userId}`, JSON.stringify(allTasks));
-        if (emailKey) {
-          localStorage.setItem(emailKey, JSON.stringify(allTasks));
-        }
-      } catch (e) {}
-
-      callback(allTasks);
+      emitMergedTasks();
     },
-    error => {
-      console.warn('Realtime task listener notice:', error.message);
-      let offlineTasks: StudyTask[] = [];
-      const readKeys = [`offline_tasks_${userId}`];
-      if (emailKey) readKeys.push(emailKey);
-
-      const offlineMap = new Map<string, StudyTask>();
-      readKeys.forEach(k => {
-        try {
-          const raw = localStorage.getItem(k);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-              parsed.forEach(t => {
-                if (t && t.id) {
-                  const matchesUser = t.userId === userId;
-                  const matchesEmail = cleanEmail && t.userEmail && t.userEmail.toLowerCase().trim() === cleanEmail;
-                  if (matchesUser || matchesEmail) {
-                    offlineMap.set(t.id, { ...t, userId, userEmail: cleanEmail || t.userEmail });
-                  }
-                }
-              });
-            }
-          }
-        } catch (e) {}
-      });
-
-      offlineTasks = Array.from(offlineMap.values());
-      callback(offlineTasks);
+    err => {
+      console.warn('Realtime task listener (userId) notice:', err.message);
+      emitMergedTasks();
     }
   );
+
+  let unsubEmail: (() => void) | null = null;
+  if (cleanEmail) {
+    unsubEmail = onSnapshot(
+      query(collection(db, TASKS_COLLECTION), where('userEmail', '==', cleanEmail)),
+      snapshot => {
+        hasEmailSnapshot = true;
+        emailDocsMap.clear();
+        snapshot.docs.forEach(docSnap => {
+          const data = docSnap.data();
+          emailDocsMap.set(docSnap.id, {
+            id: docSnap.id,
+            userId: data.userId || userId,
+            userEmail: data.userEmail || cleanEmail,
+            title: data.title,
+            subject: data.subject || 'General',
+            estimatedTime: data.estimatedTime || 30,
+            dueTime: data.dueTime || '',
+            priority: data.priority || 'Medium',
+            status: data.status || 'Pending',
+            createdAt: data.createdAt || new Date().toISOString(),
+            date: data.date || getTodayDateString(),
+            completedAt: data.completedAt,
+          } as StudyTask);
+        });
+        emitMergedTasks();
+      },
+      err => {
+        console.warn('Realtime task listener (userEmail) notice:', err.message);
+        emitMergedTasks();
+      }
+    );
+  }
+
+  return () => {
+    unsubUser();
+    if (unsubEmail) unsubEmail();
+  };
 };
 
 export const createStudyTask = async (
@@ -215,7 +273,17 @@ export const createStudyTask = async (
     createdAt: new Date().toISOString(),
   };
 
-  // Always save to user-specific localStorage backups
+  // Ensure taskId is removed from deleted_task_ids if previously deleted
+  try {
+    const raw = localStorage.getItem('deleted_task_ids');
+    if (raw) {
+      const set: string[] = JSON.parse(raw);
+      const filtered = set.filter(id => id !== taskId);
+      localStorage.setItem('deleted_task_ids', JSON.stringify(filtered));
+    }
+  } catch (e) {}
+
+  // Save to user-specific localStorage backups
   try {
     const offlineKeys = [`offline_tasks_${userId}`];
     if (cleanEmail) {
@@ -238,7 +306,7 @@ export const createStudyTask = async (
     console.warn('Failed to cache task locally:', e);
   }
 
-  // Persist to Firestore asynchronously without blocking local user feedback
+  // Persist to Firestore asynchronously
   const docRef = doc(db, TASKS_COLLECTION, taskId);
   setDoc(docRef, newTask).catch(err => {
     console.warn('Firestore setDoc background save notice:', err);
@@ -269,11 +337,23 @@ export const updateStudyTask = async (
 
   const taskRef = doc(db, TASKS_COLLECTION, taskId);
   updateDoc(taskRef, updates).catch(err => {
-    console.warn('Firestore updateDoc background notice:', err);
+    console.warn('Firestore updateDoc background notice, attempting setDoc merge:', err);
+    setDoc(taskRef, updates, { merge: true }).catch(() => {});
   });
 };
 
 export const deleteStudyTask = async (taskId: string): Promise<void> => {
+  // Save deleted_task_ids tombstone to prevent resurrection from local cache
+  try {
+    const raw = localStorage.getItem('deleted_task_ids');
+    const set: string[] = raw ? JSON.parse(raw) : [];
+    if (!set.includes(taskId)) {
+      set.push(taskId);
+      if (set.length > 200) set.shift();
+      localStorage.setItem('deleted_task_ids', JSON.stringify(set));
+    }
+  } catch (e) {}
+
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);

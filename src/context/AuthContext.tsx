@@ -11,7 +11,7 @@ import {
   updateProfile,
   updatePassword as firebaseUpdatePassword,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, onSnapshot } from 'firebase/firestore';
 import { auth, googleProvider, db } from '../firebase/config';
 import { UserProfile, StudyTask } from '../types';
 import {
@@ -168,42 +168,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    let unsubscribeTasks: (() => void) | null = null;
-
     const unsubscribeAuth = onAuthStateChanged(auth, async user => {
       if (user) {
         setCurrentUser(user);
-        const cleanEmail = user.email ? user.email.toLowerCase().trim() : '';
-
-        // Load user-specific cached tasks instantly so there's no layout jump or data leakage
-        const cached = loadCachedTasks(user.uid, cleanEmail);
-        setTasks(cached);
-        setTasksLoading(cached.length === 0);
-
-        // Run ensureUserProfile in background without delaying task loading
-        ensureUserProfile(user).catch(err => console.warn('Background ensureUserProfile:', err));
-
-        // Subscribe to user tasks immediately
-        if (unsubscribeTasks) unsubscribeTasks();
-        unsubscribeTasks = subscribeToUserTasks(user.uid, userTasks => {
-          const realTasks = userTasks.filter(
-            t =>
-              ![
-                'Advanced Calculus Integration',
-                'Organic Chemistry - Alkyl Halides',
-                'Literature Review - The Great Gatsby',
-              ].includes(t.title)
-          );
-          setTasks(realTasks);
-          setTasksLoading(false);
-          try {
-            localStorage.setItem(`offline_tasks_${user.uid}`, JSON.stringify(realTasks));
-            if (cleanEmail) {
-              const emailKey = `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
-              localStorage.setItem(emailKey, JSON.stringify(realTasks));
-            }
-          } catch (e) {}
-        }, cleanEmail);
       } else {
         // Check if there is a local guest session
         try {
@@ -213,9 +180,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (localUser && localProfile) {
               setCurrentUser(localUser);
               setUserProfile(localProfile);
-              const cached = loadCachedTasks(localUser.uid, localUser.email || '');
-              setTasks(cached);
-              setTasksLoading(false);
               setLoading(false);
               return;
             }
@@ -226,16 +190,93 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setCurrentUser(null);
         setTasks([]);
         setTasksLoading(false);
-        if (unsubscribeTasks) unsubscribeTasks();
       }
       setLoading(false);
     });
 
     return () => {
       unsubscribeAuth();
-      if (unsubscribeTasks) unsubscribeTasks();
     };
   }, []);
+
+  // Sync tasks and user profile in real-time across devices whenever currentUser changes
+  useEffect(() => {
+    if (!currentUser) {
+      setTasks([]);
+      setTasksLoading(false);
+      return;
+    }
+
+    const cleanEmail = currentUser.email ? currentUser.email.toLowerCase().trim() : '';
+
+    // Load user-specific cached tasks instantly so there's no layout jump
+    const cached = loadCachedTasks(currentUser.uid, cleanEmail);
+    if (cached.length > 0) {
+      setTasks(cached);
+      setTasksLoading(false);
+    }
+
+    // Run ensureUserProfile in background without delaying task loading
+    ensureUserProfile(currentUser).catch(err => console.warn('Background ensureUserProfile:', err));
+
+    // Realtime listener for user profile updates across sessions
+    const userDocRef = doc(db, 'users', currentUser.uid);
+    const unsubProfile = onSnapshot(
+      userDocRef,
+      docSnap => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setUserProfile({
+            uid: currentUser.uid,
+            name: data.name || currentUser.displayName || (cleanEmail ? cleanEmail.split('@')[0] : 'Student'),
+            email: data.email || currentUser.email || cleanEmail,
+            photoURL: data.photoURL || currentUser.photoURL || '',
+            createdAt: data.createdAt || new Date().toISOString(),
+            currentStreak: data.currentStreak ?? 0,
+            lastActiveDate: data.lastActiveDate || getTodayDateString(),
+            emailNotifications: data.emailNotifications ?? true,
+            browserNotifications: data.browserNotifications ?? true,
+            notificationTimeMorning: data.notificationTimeMorning || '08:00',
+            notificationTimeEvening: data.notificationTimeEvening || '18:00',
+            notificationTimeNight: data.notificationTimeNight || '21:00',
+          });
+        }
+      },
+      err => {
+        console.warn('Realtime profile listener notice:', err.message);
+      }
+    );
+
+    // Subscribe to tasks across devices matching userId or cleanEmail
+    const unsubTasks = subscribeToUserTasks(
+      currentUser.uid,
+      userTasks => {
+        const realTasks = userTasks.filter(
+          t =>
+            ![
+              'Advanced Calculus Integration',
+              'Organic Chemistry - Alkyl Halides',
+              'Literature Review - The Great Gatsby',
+            ].includes(t.title)
+        );
+        setTasks(realTasks);
+        setTasksLoading(false);
+        try {
+          localStorage.setItem(`offline_tasks_${currentUser.uid}`, JSON.stringify(realTasks));
+          if (cleanEmail) {
+            const emailKey = `offline_tasks_email_${cleanEmail.replace(/[^a-z0-9]/g, '_')}`;
+            localStorage.setItem(emailKey, JSON.stringify(realTasks));
+          }
+        } catch (e) {}
+      },
+      cleanEmail
+    );
+
+    return () => {
+      unsubProfile();
+      unsubTasks();
+    };
+  }, [currentUser?.uid, currentUser?.email]);
 
   // Recalculate streak in real-time whenever tasks state changes
   useEffect(() => {
