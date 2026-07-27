@@ -42,6 +42,7 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
   const [isCompleted, setIsCompleted] = useState<boolean>(false);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const targetEndTimeRef = useRef<number | null>(null);
 
   // Sync initial task state when modal opens or task changes
   useEffect(() => {
@@ -50,7 +51,11 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
       setSpecifiedMinutes(mins);
       setSecondsRemaining(mins * 60);
       setIsRunning(false);
+      targetEndTimeRef.current = null;
       setIsCompleted(task.status === 'Completed');
+    } else {
+      setIsRunning(false);
+      targetEndTimeRef.current = null;
     }
   }, [task, isOpen]);
 
@@ -100,26 +105,42 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
     }
   };
 
-  // Countdown effect
+  // Real-world timestamp-based countdown effect (unaffected by tab/app background throttling)
   useEffect(() => {
+    const updateRemaining = () => {
+      if (!targetEndTimeRef.current) return;
+      const now = Date.now();
+      const diffMs = targetEndTimeRef.current - now;
+      const diffSecs = Math.max(0, Math.ceil(diffMs / 1000));
+
+      setSecondsRemaining(diffSecs);
+
+      if (diffSecs <= 0) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        setIsRunning(false);
+        targetEndTimeRef.current = null;
+        playChimeSound();
+      }
+    };
+
     if (isRunning) {
-      timerRef.current = setInterval(() => {
-        setSecondsRemaining(prev => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current as NodeJS.Timeout);
-            setIsRunning(false);
-            playChimeSound();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      updateRemaining();
+      timerRef.current = setInterval(updateRemaining, 250);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
     }
 
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isRunning) {
+        updateRemaining();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [isRunning, soundEnabled]);
 
@@ -141,27 +162,41 @@ export const StudyTimerModal: React.FC<StudyTimerModalProps> = ({
   };
 
   const handleStartPause = () => {
-    setIsRunning(!isRunning);
+    if (isRunning) {
+      setIsRunning(false);
+      targetEndTimeRef.current = null;
+    } else {
+      const startSecs = secondsRemaining <= 0 ? specifiedMinutes * 60 : secondsRemaining;
+      if (secondsRemaining <= 0) {
+        setSecondsRemaining(startSecs);
+      }
+      targetEndTimeRef.current = Date.now() + startSecs * 1000;
+      setIsRunning(true);
+    }
   };
 
   const handleReset = () => {
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     setSecondsRemaining(specifiedMinutes * 60);
   };
 
   const handleAdjustTime = (deltaMinutes: number) => {
     const newMins = Math.max(1, specifiedMinutes + deltaMinutes);
     setSpecifiedMinutes(newMins);
-    if (!isRunning) {
-      setSecondsRemaining(newMins * 60);
+    if (isRunning && targetEndTimeRef.current) {
+      targetEndTimeRef.current += deltaMinutes * 60 * 1000;
+      const diffSecs = Math.max(0, Math.ceil((targetEndTimeRef.current - Date.now()) / 1000));
+      setSecondsRemaining(diffSecs);
     } else {
-      setSecondsRemaining(prev => Math.max(0, prev + deltaMinutes * 60));
+      setSecondsRemaining(newMins * 60);
     }
   };
 
   const handleSetPresetTime = (mins: number) => {
     setSpecifiedMinutes(mins);
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     setSecondsRemaining(mins * 60);
   };
 
